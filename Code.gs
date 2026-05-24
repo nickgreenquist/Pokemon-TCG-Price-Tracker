@@ -664,7 +664,7 @@ var SEED_WATCHLIST = [
   ['neo1-9', 'Lugia', 'Neo Genesis'],
   ['base1-4', 'Charizard', 'Base Set'],
   ['base1-2', 'Blastoise', 'Base Set'],
-  ['neo3-10', 'Ho-Oh', 'Neo Revelation'],
+  ['neo3-7', 'Ho-Oh', 'Neo Revelation'],
   ['neo2-1', 'Espeon', 'Neo Discovery'],
   ['neo2-13', 'Umbreon', 'Neo Discovery']
 ];

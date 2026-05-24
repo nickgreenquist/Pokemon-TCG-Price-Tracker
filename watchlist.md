@@ -10,7 +10,7 @@ the sheet to start tracking.
 | neo1-9  | Lugia     | Neo Genesis     | White whale — watching for dips |
 | base1-4 | Charizard | Base Set        | Classic — tracking market |
 | base1-2 | Blastoise | Base Set        | Nostalgia pick |
-| neo3-10 | Ho-Oh     | Neo Revelation  | Gen 2 favorite |
+| neo3-7  | Ho-Oh     | Neo Revelation  | Gen 2 favorite (Rare Holo #7) |
 | neo2-1  | Espeon    | Neo Discovery   | Gen 2 favorite |
 | neo2-13 | Umbreon   | Neo Discovery   | Gen 2 favorite |
 
