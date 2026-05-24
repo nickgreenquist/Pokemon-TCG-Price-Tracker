@@ -458,6 +458,72 @@ function pickCol_(headerMap, candidates) {
 // Manual helpers (run from the Apps Script editor)
 // ---------------------------------------------------------------------------
 
+// Standard Watchlist header row, written by seedWatchlist() if the tab is empty.
+var WATCHLIST_HEADERS = [
+  'Card ID', 'Card Name', 'Set Name', 'Price Floor ($)',
+  'Drop from High (%)', 'Drop WoW (%)', 'Active'
+];
+
+// Starter cards (mirrors watchlist.md). Thresholds are intentionally left blank —
+// set at least one per card in the sheet or no alerts will fire for it.
+var SEED_WATCHLIST = [
+  ['neo1-9', 'Lugia', 'Neo Genesis'],
+  ['base1-4', 'Charizard', 'Base Set'],
+  ['base1-2', 'Blastoise', 'Base Set'],
+  ['neo3-10', 'Ho-Oh', 'Neo Revelation'],
+  ['neo2-1', 'Espeon', 'Neo Discovery'],
+  ['neo2-13', 'Umbreon', 'Neo Discovery']
+];
+
+/**
+ * Populates the Watchlist tab with the starter cards from watchlist.md.
+ * - Writes the header row if the tab is empty.
+ * - Appends each starter card, matching columns by header name.
+ * - Skips any Card ID already present, so it is safe to re-run.
+ * Thresholds are left blank and Active is set TRUE.
+ */
+function seedWatchlist() {
+  var sheet = getSheetOrThrow_(SHEET_WATCHLIST);
+  var rows = sheet.getDataRange().getValues();
+
+  var hasHeader = rows.length > 0 && String(rows[0][0]).trim() !== '';
+  if (!hasHeader) {
+    sheet.appendRow(WATCHLIST_HEADERS);
+    rows = sheet.getDataRange().getValues();
+  }
+
+  var h = headerIndex_(rows[0]);
+  var idCol = pickCol_(h, ['card id', 'cardid', 'id']);
+  var nameCol = pickCol_(h, ['card name', 'name']);
+  var setCol = pickCol_(h, ['set name', 'set']);
+  var activeCol = pickCol_(h, ['active']);
+  if (idCol === -1) {
+    throw new Error('Watchlist header is missing a "Card ID" column. See setup.md.');
+  }
+
+  var existing = {};
+  for (var i = 1; i < rows.length; i++) {
+    var id = String(rows[i][idCol]).trim();
+    if (id) existing[id] = true;
+  }
+
+  var width = rows[0].length;
+  var added = 0;
+  for (var s = 0; s < SEED_WATCHLIST.length; s++) {
+    var card = SEED_WATCHLIST[s];
+    if (existing[card[0]]) continue;
+    var row = new Array(width).fill('');
+    row[idCol] = card[0];
+    if (nameCol !== -1) row[nameCol] = card[1];
+    if (setCol !== -1) row[setCol] = card[2];
+    if (activeCol !== -1) row[activeCol] = true;
+    sheet.appendRow(row);
+    added++;
+  }
+  Logger.log('seedWatchlist: added ' + added + ' card(s); ' +
+             (SEED_WATCHLIST.length - added) + ' already present.');
+}
+
 /**
  * Fetches and logs a single card's price to the execution log.
  * Change cardId below, then Run → testSingleCard to verify your API key works.

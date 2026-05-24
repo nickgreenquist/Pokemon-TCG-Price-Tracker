@@ -333,6 +333,39 @@ console.log('\ngetConfig — key/value parsing');
   check('defaults missing keys to empty string', cfg2.alert_email === '' && cfg2.api_key === '');
 })();
 
+console.log('\nseedWatchlist — populates Watchlist from starter cards');
+(function () {
+  // Case A: empty tab → writes header + all 6 cards.
+  const ctx = loadCode();
+  MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')] = makeSheet([]);
+  ctx.seedWatchlist();
+  let rows = MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')]._rows;
+  check('wrote header row', String(rows[0][0]) === 'Card ID' && String(rows[0][6]) === 'Active');
+  check('added all 6 starter cards', rows.length === 7);
+  check('first card is Lugia (neo1-9)', rows[1][0] === 'neo1-9' && rows[1][1] === 'Lugia' && rows[1][2] === 'Neo Genesis');
+  check('Active column set TRUE', rows[1][6] === true);
+  check('threshold columns left blank', rows[1][3] === '' && rows[1][4] === '' && rows[1][5] === '');
+
+  // Case B: re-run is idempotent (no duplicates).
+  ctx.seedWatchlist();
+  rows = MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')]._rows;
+  check('re-run adds no duplicates', rows.length === 7);
+
+  // Case C: header already present (reordered columns) → appends data correctly.
+  const ctx2 = loadCode();
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_WATCHLIST')] = makeSheet([
+    ['Active', 'Card Name', 'Card ID', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)'],
+    [true, 'Charizard', 'base1-4', 'Base Set', 200, '', ''] // pre-existing card
+  ]);
+  ctx2.seedWatchlist();
+  rows = MOCK.sheets[ctx_const(ctx2, 'SHEET_WATCHLIST')]._rows;
+  check('keeps existing pre-filled card', rows[1][2] === 'base1-4' && rows[1][4] === 200);
+  check('skips already-present base1-4', rows.filter(r => r[2] === 'base1-4').length === 1);
+  check('adds remaining 5 cards (1 header + 1 existing + 5 = 7)', rows.length === 7);
+  const lugia = rows.find(r => r[2] === 'neo1-9');
+  check('respects reordered columns (name/id placement)', lugia && lugia[1] === 'Lugia' && lugia[0] === true);
+})();
+
 // resetMock that preserves the freshly-loaded code context's expectation that
 // sheets start empty (used by fetchCardPrice block, which needs no sheets).
 function resetMockSheetsOnly() { MOCK.sheets = {}; MOCK.sentEmails = []; MOCK.logs = []; }
