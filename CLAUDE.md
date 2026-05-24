@@ -10,6 +10,11 @@
   → I report success → only then do you commit (and push straight to `main`).
 - This applies to code (`Code.gs`, tests). Trivial doc-only edits can follow the same gate
   unless I say otherwise.
+- **When I ask for a card ID, do NOT edit `Code.gs` (or the seed/tests/watchlist.md).**
+  Just verify the card against the API and return the pokemontcg.io card ID(s) plus a
+  ready-to-paste Watchlist row (Card ID / Card Name / Set Name, thresholds blank, Active
+  TRUE) and a one-line note on where to paste it. Flag dupes and mismatches. I maintain the
+  live sheet myself; only touch repo files if I explicitly ask.
 
 ## Context
 
