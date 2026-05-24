@@ -173,7 +173,7 @@ function fetchCardPrice(cardId, apiKey) {
 
   var tcg = json && json.data && json.data.tcgplayer;
   var prices = tcg && tcg.prices;
-  var url = (tcg && tcg.url) || '';
+  var redirectUrl = (tcg && tcg.url) || '';
   if (!prices) {
     Logger.log('fetchCardPrice: no tcgplayer price data for ' + cardId);
     return null;
@@ -188,7 +188,7 @@ function fetchCardPrice(cardId, apiKey) {
   for (var i = 0; i < priority.length; i++) {
     var variant = prices[priority[i]];
     if (variant && typeof variant.market === 'number' && variant.market > 0) {
-      return { price: variant.market, url: url };
+      return { price: variant.market, url: resolveTcgplayerUrl_(redirectUrl) };
     }
   }
 
@@ -198,12 +198,55 @@ function fetchCardPrice(cardId, apiKey) {
     var v = prices[key];
     if (v && typeof v.market === 'number' && v.market > 0) {
       Logger.log('fetchCardPrice: using fallback variant "' + key + '" for ' + cardId);
-      return { price: v.market, url: url };
+      return { price: v.market, url: resolveTcgplayerUrl_(redirectUrl) };
     }
   }
 
   Logger.log('fetchCardPrice: no usable market price for ' + cardId);
   return null;
+}
+
+/**
+ * Resolves a pokemontcg.io affiliate-redirect URL to a clean, direct TCGplayer
+ * product URL.
+ *
+ * The API's `tcgplayer.url` is a `prices.pokemontcg.io/tcgplayer/<id>` redirect
+ * that bounces through an Impact affiliate chain
+ * (`tcgplayer.pxf.io` → `partner.tcgplayer.com` → the product page). That whole
+ * chain is what breaks the links in email clients. We don't need to follow it:
+ * the very first hop's `Location` header carries the real product URL in its
+ * `u=` parameter, e.g.
+ *   Location: https://tcgplayer.pxf.io/scrydex?u=https://tcgplayer.com/product/86903
+ * so one no-follow request gets us the clean URL. Falls back to the original
+ * redirect URL if anything goes wrong (network, format change, non-pokemontcg
+ * URL), so a link is never worse than before.
+ *
+ * @param {string} redirectUrl  the API's tcgplayer.url
+ * @return {string}  a direct tcgplayer.com/product URL, or redirectUrl on failure
+ */
+function resolveTcgplayerUrl_(redirectUrl) {
+  if (!redirectUrl || redirectUrl.indexOf('prices.pokemontcg.io') === -1) {
+    return redirectUrl;
+  }
+  try {
+    var resp = UrlFetchApp.fetch(redirectUrl, {
+      method: 'get', followRedirects: false, muteHttpExceptions: true
+    });
+    var headers = resp.getHeaders() || {};
+    var location = headers.Location || headers.location || '';
+    var m = location.match(/[?&]u=([^&]+)/);
+    if (m && m[1]) {
+      var clean = decodeURIComponent(m[1]);
+      if (clean.indexOf('http') === 0) {
+        // Normalize to the canonical host so the link lands in one step.
+        return clean.replace(/^https?:\/\/(www\.)?tcgplayer\.com/, 'https://www.tcgplayer.com');
+      }
+    }
+    Logger.log('resolveTcgplayerUrl_: no u= in Location for ' + redirectUrl);
+  } catch (err) {
+    Logger.log('resolveTcgplayerUrl_: failed for ' + redirectUrl + ': ' + err);
+  }
+  return redirectUrl;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,10 +500,11 @@ function summaryRowHtml_(c, i) {
   var name = c.url
     ? ('<a href="' + c.url + '" style="color:#1a73e8;text-decoration:none;">' + c.cardName + '</a>')
     : c.cardName;
+  var set = '<span style="color:#666;">' + (c.setName || '—') + '</span>';
   var id = '<span style="color:#999;">' + c.cardId + '</span>';
 
   if (c.price === null) {
-    return '<tr style="background:' + zebra + ';">' + td(name) + td(id) +
+    return '<tr style="background:' + zebra + ';">' + td(name) + td(set) + td(id) +
       td('<span style="color:#a50e0e;">unavailable</span>', 'right') +
       td('—', 'right') + td('—', 'right') + td('—', 'right') + td('—') + '</tr>';
   }
@@ -475,7 +519,7 @@ function summaryRowHtml_(c, i) {
   var bg = c.alerts.length ? '#fff4f4' : zebra;
 
   return '<tr style="background:' + bg + ';">' +
-    td(name) + td(id) +
+    td(name) + td(set) + td(id) +
     td('<b>' + formatMoney_(c.price) + '</b>', 'right') +
     td('<span style="color:' + mv.color + ';">' + mv.text + '</span>', 'right') +
     td(high, 'right') + td(offHigh, 'right') + td(alertCell) + '</tr>';
@@ -488,7 +532,7 @@ function summaryHtml_(summary, url) {
     return '<th style="text-align:' + (align || 'left') +
            ';padding:6px 10px;border-bottom:2px solid #ccc;white-space:nowrap;">' + t + '</th>';
   };
-  var head = '<tr>' + th('Card') + th('ID') + th('Current', 'right') +
+  var head = '<tr>' + th('Card') + th('Set') + th('ID') + th('Current', 'right') +
              th('Since last', 'right') + th('High', 'right') + th('↓ from high', 'right') + th('Alerts') + '</tr>';
   var body = '';
   for (var i = 0; i < cards.length; i++) body += summaryRowHtml_(cards[i], i);
@@ -660,6 +704,7 @@ function runDailyPriceCheck() {
     var card = {
       cardId: cardId,
       cardName: String(row[col.name]).trim() || cardId,
+      setName: col.set === -1 ? '' : String(row[col.set]).trim(),
       priceFloor: resolveThreshold_(col.floor === -1 ? '' : row[col.floor], config.default_price_floor),
       dropFromHigh: resolveThreshold_(col.high === -1 ? '' : row[col.high], config.default_drop_from_high),
       dropWoW: resolveThreshold_(col.wow === -1 ? '' : row[col.wow], config.default_drop_wow)
@@ -669,7 +714,7 @@ function runDailyPriceCheck() {
     Utilities.sleep(API_SLEEP_MS);
 
     var price = fetched ? fetched.price : null;
-    var entry = { cardId: cardId, cardName: card.cardName, price: price,
+    var entry = { cardId: cardId, cardName: card.cardName, setName: card.setName, price: price,
                   url: fetched ? fetched.url : '', prev: null, high: null, alerts: [] };
 
     if (price === null) {

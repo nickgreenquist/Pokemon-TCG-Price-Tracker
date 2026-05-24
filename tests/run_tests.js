@@ -100,7 +100,8 @@ function buildContext() {
       const res = MOCK.fetchHandler(url, options);
       return {
         getResponseCode() { return res.code; },
-        getContentText() { return res.body; }
+        getContentText() { return res.body; },
+        getHeaders() { return res.headers || {}; }
       };
     }
   };
@@ -231,6 +232,43 @@ console.log('\nfetchCardPrice — price priority & failure handling');
     seenOptions && seenOptions.headers && seenOptions.headers['X-Api-Key'] === 'SECRET');
   ctx.fetchCardPrice('id');
   check('omits headers when no key', !seenOptions.headers);
+})();
+
+console.log('\nresolveTcgplayerUrl_ — clean product URL out of the affiliate redirect');
+(function () {
+  const ctx = loadCode();
+
+  // A non-redirect URL passes straight through (and triggers no fetch).
+  check('passes a direct tcgplayer url through untouched',
+    ctx.resolveTcgplayerUrl_('https://www.tcgplayer.com/product/5') === 'https://www.tcgplayer.com/product/5');
+  check('empty url returns empty', ctx.resolveTcgplayerUrl_('') === '');
+
+  // The first hop's Location carries the real product URL in its u= param.
+  MOCK.fetchHandler = () => ({ code: 302, headers: { Location: 'https://tcgplayer.pxf.io/scrydex?u=https://tcgplayer.com/product/86903' } });
+  check('resolves prices.pokemontcg.io redirect to clean product url',
+    ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/neo1-9') === 'https://www.tcgplayer.com/product/86903');
+
+  // u= can be URL-encoded; lowercase header key also works.
+  MOCK.fetchHandler = () => ({ code: 302, headers: { location: 'https://tcgplayer.pxf.io/scrydex?u=https%3A%2F%2Fwww.tcgplayer.com%2Fproduct%2F46471' } });
+  check('decodes url-encoded u= and reads lowercase Location',
+    ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/si1-14') === 'https://www.tcgplayer.com/product/46471');
+
+  // No Location / no u= → fall back to the original redirect (link never gets worse).
+  MOCK.fetchHandler = () => ({ code: 200, headers: {} });
+  check('falls back to original url when no Location header',
+    ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/x') === 'https://prices.pokemontcg.io/tcgplayer/x');
+
+  // A thrown fetch is caught and falls back too.
+  MOCK.fetchHandler = () => { throw new Error('network down'); };
+  check('falls back to original url on fetch error',
+    ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/x') === 'https://prices.pokemontcg.io/tcgplayer/x');
+
+  // End to end: fetchCardPrice returns the clean product URL, not the redirect.
+  MOCK.fetchHandler = (url) => url.indexOf('prices.pokemontcg.io') !== -1
+    ? { code: 302, headers: { Location: 'https://tcgplayer.pxf.io/scrydex?u=https://tcgplayer.com/product/86903' } }
+    : apiCard({ holofoil: { market: 100 } }, 'https://prices.pokemontcg.io/tcgplayer/neo1-9');
+  check('fetchCardPrice emits the resolved clean url',
+    ctx.fetchCardPrice('neo1-9').url === 'https://www.tcgplayer.com/product/86903');
 })();
 
 // Wide-grid PriceHistory: header is `Date | <cardId> | <cardId> | …`, one row per date.
@@ -375,6 +413,8 @@ console.log('\nrunDailyPriceCheck — end-to-end alert flow');
   const html = MOCK.sentEmails[0].options.htmlBody;
   check('html has a <table>', !!html && html.indexOf('<table') !== -1);
   check('html links the card name to TCGplayer', html.indexOf('<a href="https://www.tcgplayer.com/product/x"') !== -1 && html.indexOf('>Charizard</a>') !== -1);
+  check('html has a Set column header', html.indexOf('>Set<') !== -1);
+  check('html shows the readable set name', html.indexOf('Base Set') !== -1);
   check('html shows ▼ -50.0% movement', html.indexOf('▼') !== -1 && html.indexOf('-50.0%') !== -1);
   check('html alerts cell names the alert types', html.indexOf('Price floor') !== -1 && html.indexOf('Drop from high') !== -1);
   check('html omits inactive Lugia', html.indexOf('neo1-9') === -1);

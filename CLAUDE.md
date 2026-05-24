@@ -96,6 +96,12 @@ The Apps Script includes:
 - Price priority: `holofoil` → `unlimitedHolofoil` → `1stEditionHolofoil` → `normal` → `reverseHolofoil` → `1stEditionNormal` → `unlimited` → `1stEdition` (uses each variant's `.market`)
 - Fallback: if none of the above match, uses any variant with a usable `.market` price, so an unrecognized variant key never silently skips a card
 - Returns `{ price, url }` (market price + TCGplayer URL) or `null` on failure
+- `url` is resolved to a clean direct `tcgplayer.com/product/<id>` link via `resolveTcgplayerUrl_()` (see below), not the raw affiliate redirect
+
+**`resolveTcgplayerUrl_(redirectUrl)`**
+- The API's `tcgplayer.url` is a `prices.pokemontcg.io/tcgplayer/<id>` redirect that bounces through a 3-hop Impact affiliate chain — that chain is what breaks the links in email clients
+- Does one no-follow request and pulls the real product URL out of the first hop's `Location` header (`...?u=https://tcgplayer.com/product/<id>`), normalizing to `https://www.tcgplayer.com`
+- Falls back to the original redirect URL on any error (network, format change, non-pokemontcg URL), so a link is never worse than before
 
 **`getHistoricHigh(cardId)`**
 - Reads the card's column in the wide `PriceHistory` grid, EXCLUDING today's row
@@ -117,7 +123,7 @@ The Apps Script includes:
 
 **`sendDailySummaryEmail(email, summary)`**
 - Sends an HTML-table DAILY SUMMARY every run (not only when alerts fire); plain text included as a fallback
-- Table columns: Card (linked to its TCGplayer page) · ID · Current · Since last (day-over-day ▲/▼ $/%) · High · ↓ from high · Alerts
+- Table columns: Card (linked to its TCGplayer page) · Set (readable set name) · ID · Current · Since last (day-over-day ▲/▼ $/%) · High · ↓ from high · Alerts
 - Movement colored green/red; rows with a fired alert are highlighted
 - Subject: `🎴 Pokémon Daily — N card(s), M alert(s) — YYYY-MM-DD`
 - **At most one email per daily run** — everything bundled into one digest, never one per card
