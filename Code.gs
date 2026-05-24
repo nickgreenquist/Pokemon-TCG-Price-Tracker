@@ -542,7 +542,7 @@ function summaryHtml_(summary, url) {
     : 'No alerts today.';
 
   return '<div style="font-family:Arial,Helvetica,sans-serif;color:#222;font-size:14px;">' +
-    '<h2 style="font-size:18px;margin:0 0 12px;">🎴 Pokémon TCG daily summary — ' + summary.date + '</h2>' +
+    '<h2 style="font-size:18px;margin:0 0 12px;">Pokémon TCG daily summary — ' + summary.date + '</h2>' +
     '<table style="border-collapse:collapse;font-size:13px;">' + head + body + '</table>' +
     '<p style="font-size:13px;color:#555;margin-top:14px;">' + alertNote +
     ' &nbsp;·&nbsp; <a href="' + url + '">Open the tracker</a></p>' +
@@ -593,8 +593,8 @@ function sendDailySummaryEmail(email, summary) {
   var url = SpreadsheetApp.getActiveSpreadsheet().getUrl();
   lines.push('Open the tracker: ' + url);
 
-  var subject = '🎴 Pokémon Daily — ' + priced + ' card(s), ' +
-                summary.totalAlerts + ' alert(s) — ' + summary.date;
+  var subject = '🎴 Pokémon TCG Watchlist - Daily Report - ' + priced + ' card(s), ' +
+                summary.totalAlerts + ' alert(s) - ' + summary.date;
 
   // HTML table body, with the plain-text version as a fallback for clients
   // that don't render HTML.

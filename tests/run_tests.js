@@ -400,7 +400,7 @@ console.log('\nrunDailyPriceCheck — end-to-end alert flow');
   check('did NOT fire WoW alert (blank threshold)', !alerts.some(r => r[3] === 'Week-over-week drop'));
   check('sent exactly one summary email', MOCK.sentEmails.length === 1);
   const body = MOCK.sentEmails[0].body;
-  check('subject counts 1 priced card + 2 alerts', MOCK.sentEmails[0].subject.indexOf('1 card(s), 2 alert(s)') !== -1);
+  check('subject has report title + counts', MOCK.sentEmails[0].subject.indexOf('🎴 Pokémon TCG Watchlist - Daily Report - 1 card(s), 2 alert(s) - ') === 0);
   check('email has a PRICES section', body.indexOf('PRICES') !== -1);
   check('email lists Charizard current price', body.indexOf('Charizard (base1-4): $150.00') !== -1);
   check('email shows movement vs last (▼ from $300 → -50%)', body.indexOf('▼') !== -1 && body.indexOf('-50.0% since last check') !== -1);
@@ -451,7 +451,7 @@ console.log('\nrunDailyPriceCheck — no alerts / null price');
   // New behavior: a summary still goes out even with zero alerts.
   check('sends daily summary even with no alerts', MOCK.sentEmails.length === 1);
   const body = MOCK.sentEmails[0].body;
-  check('summary subject shows 0 alerts', MOCK.sentEmails[0].subject.indexOf('0 alert(s)') !== -1);
+  check('subject has report title + 0 alerts', MOCK.sentEmails[0].subject.indexOf('🎴 Pokémon TCG Watchlist - Daily Report - ') === 0 && MOCK.sentEmails[0].subject.indexOf('0 alert(s)') !== -1);
   check('ALERTS section says none today', body.indexOf('ALERTS: none today.') !== -1);
   check('succeeded card shown with price (first record)', body.indexOf('Charizard (base1-4): $500.00') !== -1 && body.indexOf('first recorded price') !== -1);
   check('failed card shown as unavailable', body.indexOf('Lugia (neo1-9): price unavailable today') !== -1);
