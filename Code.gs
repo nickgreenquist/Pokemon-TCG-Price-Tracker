@@ -405,12 +405,15 @@ function runDailyPriceCheck() {
     if (!cardId) continue;
     if (col.active !== -1 && !isTruthyFlag_(row[col.active])) continue;
 
+    // A blank per-card threshold falls back to the matching Config default, so
+    // alerts work watch-list-wide without filling in every cell. Per-card values
+    // always win when present.
     var card = {
       cardId: cardId,
       cardName: String(row[col.name]).trim() || cardId,
-      priceFloor: col.floor === -1 ? '' : row[col.floor],
-      dropFromHigh: col.high === -1 ? '' : row[col.high],
-      dropWoW: col.wow === -1 ? '' : row[col.wow]
+      priceFloor: resolveThreshold_(col.floor === -1 ? '' : row[col.floor], config.default_price_floor),
+      dropFromHigh: resolveThreshold_(col.high === -1 ? '' : row[col.high], config.default_drop_from_high),
+      dropWoW: resolveThreshold_(col.wow === -1 ? '' : row[col.wow], config.default_drop_wow)
     };
 
     var price = fetchCardPrice(cardId, config.api_key);
@@ -444,6 +447,22 @@ function runDailyPriceCheck() {
     sendAlertEmail(config.alert_email, emailAlerts, today);
   }
   Logger.log('runDailyPriceCheck: done. ' + emailAlerts.length + ' alert(s) fired.');
+}
+
+/**
+ * Resolves a threshold: the per-card cell value if it's non-blank, otherwise the
+ * Config default (parsed to a number). Returns '' (meaning "check disabled") when
+ * neither is set.
+ */
+function resolveThreshold_(cellValue, defaultValue) {
+  if (cellValue !== '' && cellValue !== null && cellValue !== undefined) {
+    return cellValue;
+  }
+  if (defaultValue !== '' && defaultValue !== null && defaultValue !== undefined) {
+    var n = Number(defaultValue);
+    if (isFinite(n)) return n;
+  }
+  return '';
 }
 
 /** Returns the first matching column index for a list of candidate names, or -1. */

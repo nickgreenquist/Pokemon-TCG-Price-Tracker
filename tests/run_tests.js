@@ -333,6 +333,74 @@ console.log('\ngetConfig — key/value parsing');
   check('defaults missing keys to empty string', cfg2.alert_email === '' && cfg2.api_key === '');
 })();
 
+console.log('\nConfig default thresholds — blank per-card cells fall back to Config');
+(function () {
+  const ctx = loadCode();
+  // Watchlist: a card with ALL threshold cells blank.
+  MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')] = makeSheet([
+    ['Card ID', 'Card Name', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)', 'Active'],
+    ['base1-4', 'Charizard', 'Base Set', '', '', '', true]
+  ]);
+  // Prior high $300 → today $210 is exactly 30% down.
+  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
+    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
+    [dayStr(-10), 'base1-4', 'Charizard', 300]
+  ]);
+  MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
+  // Single global default: 20% drop-from-high.
+  MOCK.sheets[ctx_const(ctx, 'SHEET_CONFIG')] = makeSheet([
+    ['Key', 'Value'],
+    ['alert_email', 'me@example.com'],
+    ['api_key', ''],
+    ['default_drop_from_high', '20']
+  ]);
+  MOCK.fetchHandler = () => apiCard({ holofoil: { market: 210 } });
+
+  ctx.runDailyPriceCheck();
+  let alerts = MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')]._rows;
+  check('blank cell uses Config default (30% ≥ 20% default → fires)', alerts.some(r => r[3] === 'Drop from high'));
+  check('one digest email sent', MOCK.sentEmails.length === 1);
+
+  // Per-card value overrides the Config default.
+  const ctx2 = loadCode();
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_WATCHLIST')] = makeSheet([
+    ['Card ID', 'Card Name', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)', 'Active'],
+    ['base1-4', 'Charizard', 'Base Set', '', 50, '', true] // per-card 50% beats default 20%
+  ]);
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([
+    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
+    [dayStr(-10), 'base1-4', 'Charizard', 300]
+  ]);
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_CONFIG')] = makeSheet([
+    ['Key', 'Value'], ['alert_email', 'me@example.com'], ['default_drop_from_high', '20']
+  ]);
+  MOCK.fetchHandler = () => apiCard({ holofoil: { market: 210 } }); // 30% down
+
+  ctx2.runDailyPriceCheck();
+  alerts = MOCK.sheets[ctx_const(ctx2, 'SHEET_ALERTS')]._rows;
+  check('per-card 50% overrides default → 30% does NOT fire', !alerts.some(r => r[3] === 'Drop from high'));
+
+  // No default + blank cell → check stays disabled.
+  const ctx3 = loadCode();
+  MOCK.sheets[ctx_const(ctx3, 'SHEET_WATCHLIST')] = makeSheet([
+    ['Card ID', 'Card Name', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)', 'Active'],
+    ['base1-4', 'Charizard', 'Base Set', '', '', '', true]
+  ]);
+  MOCK.sheets[ctx_const(ctx3, 'SHEET_HISTORY')] = makeSheet([
+    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
+    [dayStr(-10), 'base1-4', 'Charizard', 300]
+  ]);
+  MOCK.sheets[ctx_const(ctx3, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
+  MOCK.sheets[ctx_const(ctx3, 'SHEET_CONFIG')] = makeSheet([['Key', 'Value'], ['alert_email', 'me@example.com']]);
+  MOCK.fetchHandler = () => apiCard({ holofoil: { market: 1 } }); // huge drop
+
+  ctx3.runDailyPriceCheck();
+  alerts = MOCK.sheets[ctx_const(ctx3, 'SHEET_ALERTS')]._rows;
+  check('no default + blank cell → no alert', alerts.length === 1, 'rows=' + alerts.length);
+  check('no email when all checks disabled', MOCK.sentEmails.length === 0);
+})();
+
 console.log('\nseedWatchlist — populates Watchlist from starter cards');
 (function () {
   // Case A: empty tab → writes header + all 6 cards.

@@ -47,6 +47,11 @@ Headers: `Timestamp | Card ID | Card Name | Alert Type | Details`
 Key/value pairs:
 - `alert_email` → email address for alerts
 - `api_key` → pokemontcg.io API key (free at pokemontcg.io)
+- `default_drop_from_high` (optional) → fallback % used for any card whose `Drop from High (%)` cell is blank
+- `default_price_floor` / `default_drop_wow` (optional) → same fallback idea for the other two checks
+
+A blank per-card threshold falls back to the matching `default_*` Config value, so alerts
+can work watch-list-wide with zero per-card setup. A per-card value always overrides the default.
 
 ---
 

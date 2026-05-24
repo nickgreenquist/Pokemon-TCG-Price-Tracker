@@ -41,6 +41,16 @@ A simple two-column `Key | Value` table:
 |-----|-------|
 | alert_email | you@example.com |
 | api_key | (your pokemontcg.io key, optional) |
+| default_drop_from_high | 20 |
+
+**`default_drop_from_high` is the low-effort way to get alerts.** Any card whose
+`Drop from High (%)` cell is blank uses this default instead — so you can leave the whole
+Watchlist threshold columns empty and still get an alert whenever any card falls 20% (or
+whatever you set) from its tracked high. A value typed into a card's own cell always wins.
+
+Optional matching defaults exist for the other two checks if you want them:
+`default_price_floor` and `default_drop_wow`. Leave a default key out entirely to keep
+that check off unless a card sets it explicitly.
 
 ---
 

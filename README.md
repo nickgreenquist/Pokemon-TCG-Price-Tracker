@@ -20,7 +20,14 @@ Lugia, Base Set Charizard), not for deck building or competitive play.
   required — it runs in Google's cloud.
 
 All three alert checks are independent and per-card; a single card can trigger more than
-one in a run. Any threshold you leave blank is skipped.
+one in a run. Any threshold you leave blank is skipped — **unless** a matching default is
+set in the `Config` tab.
+
+**Low-effort mode (recommended):** set a single `default_drop_from_high` value (e.g. `20`)
+in the `Config` tab and leave the Watchlist threshold columns empty. Every card then alerts
+when it falls that far from its tracked high — no per-card setup. A value typed into a
+card's own cell overrides the default. (Optional `default_price_floor` / `default_drop_wow`
+keys work the same way.)
 
 **At most one email per day.** Every triggered card is bundled into a single digest email
 sent once at the end of the daily run — never one email per card. If nothing triggers, no
