@@ -69,7 +69,8 @@ The Apps Script should include:
 - Calls `https://api.pokemontcg.io/v2/cards/${cardId}`
 - Sets `X-Api-Key` header
 - Extracts market price from `tcgplayer.prices`
-- Price priority: `holofoil.market` → `normal.market` → `reverseHolofoil.market` → `1stEditionHolofoil.market`
+- Price priority: `holofoil` → `unlimitedHolofoil` → `1stEditionHolofoil` → `normal` → `reverseHolofoil` → `1stEditionNormal` → `unlimited` → `1stEdition` (uses each variant's `.market`)
+- Fallback: if none of the above match, uses any variant with a usable `.market` price, so an unrecognized variant key never silently skips a card
 - Returns price as a number or `null` on failure
 
 **`getHistoricHigh(cardId)`**

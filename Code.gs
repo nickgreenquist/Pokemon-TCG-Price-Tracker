@@ -176,11 +176,26 @@ function fetchCardPrice(cardId, apiKey) {
     return null;
   }
 
-  var priority = ['holofoil', 'normal', 'reverseHolofoil', '1stEditionHolofoil'];
+  // Preferred variants, holo prints first (these are the actual card for vintage
+  // holos), then non-holo / edition-specific prints.
+  var priority = [
+    'holofoil', 'unlimitedHolofoil', '1stEditionHolofoil',
+    'normal', 'reverseHolofoil', '1stEditionNormal', 'unlimited', '1stEdition'
+  ];
   for (var i = 0; i < priority.length; i++) {
     var variant = prices[priority[i]];
     if (variant && typeof variant.market === 'number' && variant.market > 0) {
       return variant.market;
+    }
+  }
+
+  // Fallback: use ANY variant that has a usable market price, so an unrecognized
+  // or newly-added variant key never causes a card to be silently skipped.
+  for (var key in prices) {
+    var v = prices[key];
+    if (v && typeof v.market === 'number' && v.market > 0) {
+      Logger.log('fetchCardPrice: using fallback variant "' + key + '" for ' + cardId);
+      return v.market;
     }
   }
 

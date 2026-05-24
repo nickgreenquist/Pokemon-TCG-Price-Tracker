@@ -97,9 +97,10 @@ the week-over-week tolerance window, duplicate-run protection, and the end-to-en
 ## Known limitations
 
 - **English cards only.** pokemontcg.io does not cover Portuguese/Brazilian pricing.
-- **Raw/ungraded prices.** Uses TCGplayer market price for one variant per card
-  (`holofoil → normal → reverseHolofoil → 1stEditionHolofoil`). No graded (PSA/BGS) or
-  sealed-product pricing, and no per-condition breakdown.
+- **Raw/ungraded prices.** Uses TCGplayer market price for one variant per card, holo
+  prints preferred (`holofoil → unlimitedHolofoil → 1stEditionHolofoil → normal → …`), with
+  a fallback to any priced variant. No graded (PSA/BGS) or sealed-product pricing, and no
+  per-condition breakdown.
 - **Historic high builds over time.** "Drop from high" only knows the highest price
   recorded *since you started running the tracker*, not an all-time market high.
 - **Alerts repeat daily.** If a card stays below a threshold, you'll get an alert every

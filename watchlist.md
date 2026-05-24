@@ -27,8 +27,9 @@ IDs follow the pattern `<setCode><number>`, e.g. `base1-4` is card #4 of Base Se
 ## Notes on pricing
 
 - Prices come from **TCGplayer market price** via the pokemontcg.io API.
-- The tracker picks one variant per card in this priority order:
-  `holofoil → normal → reverseHolofoil → 1stEditionHolofoil`.
-  So for a holo card like Base Set Charizard you're tracking the holofoil market price.
+- The tracker picks one variant per card, holo prints first:
+  `holofoil → unlimitedHolofoil → 1stEditionHolofoil → normal → reverseHolofoil → …`,
+  falling back to any priced variant. So for a vintage holo like Neo Discovery Umbreon
+  you're tracking its `unlimitedHolofoil` market price.
 - Prices are for **raw/ungraded English** cards. Graded (PSA/BGS) and sealed product
   are not covered.

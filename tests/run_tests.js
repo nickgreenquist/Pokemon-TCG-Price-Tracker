@@ -159,6 +159,15 @@ console.log('\nfetchCardPrice — price priority & failure handling');
   MOCK.fetchHandler = () => apiCard({ '1stEditionHolofoil': { market: 999 } });
   check('reads 1stEditionHolofoil key', ctx.fetchCardPrice('id') === 999);
 
+  MOCK.fetchHandler = () => apiCard({ unlimitedHolofoil: { market: 461.22 } });
+  check('reads unlimitedHolofoil (the neo2-13/Umbreon case)', ctx.fetchCardPrice('id') === 461.22);
+
+  MOCK.fetchHandler = () => apiCard({ holofoil: { market: 100 }, unlimitedHolofoil: { market: 461 } });
+  check('prefers holofoil over unlimitedHolofoil', ctx.fetchCardPrice('id') === 100);
+
+  MOCK.fetchHandler = () => apiCard({ someBrandNewVariant: { market: 42 } });
+  check('fallback uses any variant with a market price', ctx.fetchCardPrice('id') === 42);
+
   MOCK.fetchHandler = () => ({ code: 200, body: JSON.stringify({ data: { id: 'x' } }) });
   check('null when no tcgplayer object', ctx.fetchCardPrice('id') === null);
 
