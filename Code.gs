@@ -134,12 +134,13 @@ function getConfig() {
 /**
  * Fetches the current market price for a card from pokemontcg.io.
  *
- * Price priority: holofoil → normal → reverseHolofoil → 1stEditionHolofoil
- * (uses each variant's `.market` value).
+ * Price priority: holofoil → unlimitedHolofoil → 1stEditionHolofoil → normal →
+ * reverseHolofoil → 1stEditionNormal → unlimited → 1stEdition (uses each variant's
+ * `.market`), then a fallback to any variant with a usable market price.
  *
  * @param {string} cardId  e.g. "base1-4"
  * @param {string} apiKey  optional; the API works keyless at a lower rate limit
- * @return {number|null}   a positive market price, or null on any failure / no data
+ * @return {?{price:number, url:string}}  market price + TCGplayer URL, or null on failure
  */
 function fetchCardPrice(cardId, apiKey) {
   if (!cardId) return null;
@@ -170,7 +171,9 @@ function fetchCardPrice(cardId, apiKey) {
     return null;
   }
 
-  var prices = json && json.data && json.data.tcgplayer && json.data.tcgplayer.prices;
+  var tcg = json && json.data && json.data.tcgplayer;
+  var prices = tcg && tcg.prices;
+  var url = (tcg && tcg.url) || '';
   if (!prices) {
     Logger.log('fetchCardPrice: no tcgplayer price data for ' + cardId);
     return null;
@@ -185,7 +188,7 @@ function fetchCardPrice(cardId, apiKey) {
   for (var i = 0; i < priority.length; i++) {
     var variant = prices[priority[i]];
     if (variant && typeof variant.market === 'number' && variant.market > 0) {
-      return variant.market;
+      return { price: variant.market, url: url };
     }
   }
 
@@ -195,7 +198,7 @@ function fetchCardPrice(cardId, apiKey) {
     var v = prices[key];
     if (v && typeof v.market === 'number' && v.market > 0) {
       Logger.log('fetchCardPrice: using fallback variant "' + key + '" for ' + cardId);
-      return v.market;
+      return { price: v.market, url: url };
     }
   }
 
@@ -431,9 +434,81 @@ function summaryLine_(c) {
   return line;
 }
 
+/** Movement cell parts (text + color) for the HTML table: ▲/▼ $delta (±%). */
+function movementParts_(c) {
+  if (!(c.prev && c.prev.price > 0)) return { text: 'new', color: '#888888' };
+  var delta = c.price - c.prev.price;
+  if (delta === 0) return { text: 'no change', color: '#888888' };
+  var pct = delta / c.prev.price * 100;
+  return {
+    text: (delta > 0 ? '▲ ' : '▼ ') + formatMoney_(Math.abs(delta)) +
+          ' (' + (delta > 0 ? '+' : '-') + Math.abs(pct).toFixed(1) + '%)',
+    color: delta > 0 ? '#137333' : '#a50e0e'
+  };
+}
+
+/** Builds one <tr> for a card in the HTML summary table. */
+function summaryRowHtml_(c, i) {
+  var zebra = (i % 2 === 1) ? '#f7f7f7' : '#ffffff';
+  var td = function (content, align) {
+    return '<td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:' +
+           (align || 'left') + ';white-space:nowrap;">' + content + '</td>';
+  };
+  var name = c.url
+    ? ('<a href="' + c.url + '" style="color:#1a73e8;text-decoration:none;">' + c.cardName + '</a>')
+    : c.cardName;
+  var id = '<span style="color:#999;">' + c.cardId + '</span>';
+
+  if (c.price === null) {
+    return '<tr style="background:' + zebra + ';">' + td(name) + td(id) +
+      td('<span style="color:#a50e0e;">unavailable</span>', 'right') +
+      td('—', 'right') + td('—', 'right') + td('—', 'right') + td('—') + '</tr>';
+  }
+
+  var mv = movementParts_(c);
+  var high = (c.high && c.high > 0) ? formatMoney_(c.high) : '—';
+  var offHigh = (c.high && c.high > 0 && c.price < c.high)
+    ? ((c.high - c.price) / c.high * 100).toFixed(1) + '%' : '—';
+  var alertText = c.alerts.length ? c.alerts.map(function (a) { return a.type; }).join(', ') : '';
+  var alertCell = alertText
+    ? '<span style="color:#a50e0e;font-weight:bold;">' + alertText + '</span>' : '—';
+  var bg = c.alerts.length ? '#fff4f4' : zebra;
+
+  return '<tr style="background:' + bg + ';">' +
+    td(name) + td(id) +
+    td('<b>' + formatMoney_(c.price) + '</b>', 'right') +
+    td('<span style="color:' + mv.color + ';">' + mv.text + '</span>', 'right') +
+    td(high, 'right') + td(offHigh, 'right') + td(alertCell) + '</tr>';
+}
+
+/** Builds the full HTML body for the daily summary email. */
+function summaryHtml_(summary, url) {
+  var cards = summary.cards || [];
+  var th = function (t, align) {
+    return '<th style="text-align:' + (align || 'left') +
+           ';padding:6px 10px;border-bottom:2px solid #ccc;white-space:nowrap;">' + t + '</th>';
+  };
+  var head = '<tr>' + th('Card') + th('ID') + th('Current', 'right') +
+             th('Since last', 'right') + th('High', 'right') + th('↓ from high', 'right') + th('Alerts') + '</tr>';
+  var body = '';
+  for (var i = 0; i < cards.length; i++) body += summaryRowHtml_(cards[i], i);
+
+  var alertNote = summary.totalAlerts > 0
+    ? '<b style="color:#a50e0e;">' + summary.totalAlerts + ' alert(s) fired today.</b>'
+    : 'No alerts today.';
+
+  return '<div style="font-family:Arial,Helvetica,sans-serif;color:#222;font-size:14px;">' +
+    '<h2 style="font-size:18px;margin:0 0 12px;">🎴 Pokémon TCG daily summary — ' + summary.date + '</h2>' +
+    '<table style="border-collapse:collapse;font-size:13px;">' + head + body + '</table>' +
+    '<p style="font-size:13px;color:#555;margin-top:14px;">' + alertNote +
+    ' &nbsp;·&nbsp; <a href="' + url + '">Open the tracker</a></p>' +
+    '</div>';
+}
+
 /**
- * Sends the daily summary email: current price + movement for every watched card,
- * followed by an ALERTS section. Sent every run (not only when alerts fire).
+ * Sends the daily summary email: an HTML table of current price + movement for every
+ * watched card, followed by an alerts note. A plain-text version is included as a
+ * fallback. Sent every run (not only when alerts fire).
  *
  * @param {string} email
  * @param {{date:string, cards:Array, totalAlerts:number}} summary
@@ -471,11 +546,15 @@ function sendDailySummaryEmail(email, summary) {
     lines.push('ALERTS: none today.');
   }
   lines.push('');
-  lines.push('Open the tracker: ' + SpreadsheetApp.getActiveSpreadsheet().getUrl());
+  var url = SpreadsheetApp.getActiveSpreadsheet().getUrl();
+  lines.push('Open the tracker: ' + url);
 
   var subject = '🎴 Pokémon Daily — ' + priced + ' card(s), ' +
                 summary.totalAlerts + ' alert(s) — ' + summary.date;
-  MailApp.sendEmail(email, subject, lines.join('\n'));
+
+  // HTML table body, with the plain-text version as a fallback for clients
+  // that don't render HTML.
+  MailApp.sendEmail(email, subject, lines.join('\n'), { htmlBody: summaryHtml_(summary, url) });
 }
 
 // ---------------------------------------------------------------------------
@@ -586,10 +665,12 @@ function runDailyPriceCheck() {
       dropWoW: resolveThreshold_(col.wow === -1 ? '' : row[col.wow], config.default_drop_wow)
     };
 
-    var price = fetchCardPrice(cardId, config.api_key);
+    var fetched = fetchCardPrice(cardId, config.api_key);
     Utilities.sleep(API_SLEEP_MS);
 
-    var entry = { cardId: cardId, cardName: card.cardName, price: price, prev: null, high: null, alerts: [] };
+    var price = fetched ? fetched.price : null;
+    var entry = { cardId: cardId, cardName: card.cardName, price: price,
+                  url: fetched ? fetched.url : '', prev: null, high: null, alerts: [] };
 
     if (price === null) {
       Logger.log('runDailyPriceCheck: ' + cardId + ' has no price; included as unavailable.');
@@ -731,8 +812,9 @@ function seedWatchlist() {
 function testSingleCard() {
   var cardId = 'base1-4'; // ← change me
   var config = getConfig();
-  var price = fetchCardPrice(cardId, config.api_key);
-  Logger.log(price === null ? ('No price found for ' + cardId) : (cardId + ' market price: $' + price));
+  var result = fetchCardPrice(cardId, config.api_key);
+  Logger.log(result === null ? ('No price found for ' + cardId)
+                             : (cardId + ' market price: $' + result.price + '  ' + result.url));
 }
 
 /**

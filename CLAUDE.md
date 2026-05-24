@@ -90,7 +90,7 @@ The Apps Script should include:
 - Extracts market price from `tcgplayer.prices`
 - Price priority: `holofoil` → `unlimitedHolofoil` → `1stEditionHolofoil` → `normal` → `reverseHolofoil` → `1stEditionNormal` → `unlimited` → `1stEdition` (uses each variant's `.market`)
 - Fallback: if none of the above match, uses any variant with a usable `.market` price, so an unrecognized variant key never silently skips a card
-- Returns price as a number or `null` on failure
+- Returns `{ price, url }` (market price + TCGplayer URL) or `null` on failure
 
 **`getHistoricHigh(cardId)`**
 - Reads the card's column in the wide `PriceHistory` grid, EXCLUDING today's row
@@ -111,11 +111,12 @@ The Apps Script should include:
 - Appends a row to `Alerts` tab with current timestamp
 
 **`sendDailySummaryEmail(email, summary)`**
-- Sends a plain-text DAILY SUMMARY every run (not only when alerts fire)
-- `PRICES` section: each card's current price + day-over-day movement + distance below high
-- `ALERTS` section: triggered alerts, or "none today"
+- Sends an HTML-table DAILY SUMMARY every run (not only when alerts fire); plain text included as a fallback
+- Table columns: Card (linked to its TCGplayer page) · ID · Current · Since last (day-over-day ▲/▼ $/%) · High · ↓ from high · Alerts
+- Movement colored green/red; rows with a fired alert are highlighted
 - Subject: `🎴 Pokémon Daily — N card(s), M alert(s) — YYYY-MM-DD`
-- **At most one email per daily run** — everything bundled into one digest, never one per card.
+- **At most one email per daily run** — everything bundled into one digest, never one per card
+- Built by helpers `summaryHtml_` / `summaryRowHtml_` / `movementParts_`; plain-text rows by `summaryLine_`
 
 ### Main function
 

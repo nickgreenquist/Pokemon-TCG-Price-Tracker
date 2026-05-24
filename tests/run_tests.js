@@ -106,7 +106,9 @@ function buildContext() {
   };
 
   const MailApp = {
-    sendEmail(to, subject, body) { MOCK.sentEmails.push({ to, subject, body }); }
+    sendEmail(to, subject, body, options) {
+      MOCK.sentEmails.push({ to, subject, body, options: options || {} });
+    }
   };
 
   const Utilities = {
@@ -162,8 +164,11 @@ function histCol(ctx, rows, cardId) {
 }
 
 // --- API response fixtures --------------------------------------------------
-function apiCard(prices) {
-  return { code: 200, body: JSON.stringify({ data: { id: 'x', tcgplayer: { prices } } }) };
+function apiCard(prices, url) {
+  return {
+    code: 200,
+    body: JSON.stringify({ data: { id: 'x', tcgplayer: { prices, url: url || 'https://www.tcgplayer.com/product/x' } } })
+  };
 }
 
 // ===========================================================================
@@ -179,26 +184,27 @@ console.log('\nfetchCardPrice — price priority & failure handling');
     holofoil: { market: 100 },
     normal: { market: 50 },
     reverseHolofoil: { market: 75 }
-  });
-  check('prefers holofoil.market', ctx.fetchCardPrice('id') === 100);
+  }, 'https://tcg/charizard');
+  check('prefers holofoil.market', ctx.fetchCardPrice('id').price === 100);
+  check('returns the tcgplayer url', ctx.fetchCardPrice('id').url === 'https://tcg/charizard');
 
   MOCK.fetchHandler = () => apiCard({ normal: { market: 50 }, reverseHolofoil: { market: 75 } });
-  check('falls back to normal when no holofoil', ctx.fetchCardPrice('id') === 50);
+  check('falls back to normal when no holofoil', ctx.fetchCardPrice('id').price === 50);
 
   MOCK.fetchHandler = () => apiCard({ reverseHolofoil: { market: 75 } });
-  check('falls back to reverseHolofoil', ctx.fetchCardPrice('id') === 75);
+  check('falls back to reverseHolofoil', ctx.fetchCardPrice('id').price === 75);
 
   MOCK.fetchHandler = () => apiCard({ '1stEditionHolofoil': { market: 999 } });
-  check('reads 1stEditionHolofoil key', ctx.fetchCardPrice('id') === 999);
+  check('reads 1stEditionHolofoil key', ctx.fetchCardPrice('id').price === 999);
 
   MOCK.fetchHandler = () => apiCard({ unlimitedHolofoil: { market: 461.22 } });
-  check('reads unlimitedHolofoil (the neo2-13/Umbreon case)', ctx.fetchCardPrice('id') === 461.22);
+  check('reads unlimitedHolofoil (the neo2-13/Umbreon case)', ctx.fetchCardPrice('id').price === 461.22);
 
   MOCK.fetchHandler = () => apiCard({ holofoil: { market: 100 }, unlimitedHolofoil: { market: 461 } });
-  check('prefers holofoil over unlimitedHolofoil', ctx.fetchCardPrice('id') === 100);
+  check('prefers holofoil over unlimitedHolofoil', ctx.fetchCardPrice('id').price === 100);
 
   MOCK.fetchHandler = () => apiCard({ someBrandNewVariant: { market: 42 } });
-  check('fallback uses any variant with a market price', ctx.fetchCardPrice('id') === 42);
+  check('fallback uses any variant with a market price', ctx.fetchCardPrice('id').price === 42);
 
   MOCK.fetchHandler = () => ({ code: 200, body: JSON.stringify({ data: { id: 'x' } }) });
   check('null when no tcgplayer object', ctx.fetchCardPrice('id') === null);
@@ -364,6 +370,14 @@ console.log('\nrunDailyPriceCheck — end-to-end alert flow');
   check('email has ALERTS (2) section', body.indexOf('🚨 ALERTS (2)') !== -1);
   check('email omits inactive Lugia', body.indexOf('neo1-9') === -1);
   check('email body references the sheet URL', body.indexOf(MOCK.url) !== -1);
+
+  // HTML table body.
+  const html = MOCK.sentEmails[0].options.htmlBody;
+  check('html has a <table>', !!html && html.indexOf('<table') !== -1);
+  check('html links the card name to TCGplayer', html.indexOf('<a href="https://www.tcgplayer.com/product/x"') !== -1 && html.indexOf('>Charizard</a>') !== -1);
+  check('html shows ▼ -50.0% movement', html.indexOf('▼') !== -1 && html.indexOf('-50.0%') !== -1);
+  check('html alerts cell names the alert types', html.indexOf('Price floor') !== -1 && html.indexOf('Drop from high') !== -1);
+  check('html omits inactive Lugia', html.indexOf('neo1-9') === -1);
 
   // Re-run same day: must upsert, not append a second row for today.
   ctx.runDailyPriceCheck();
