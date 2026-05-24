@@ -534,35 +534,39 @@ console.log('\nwriteDailyPrices_ — wide-grid upsert, named headers & dynamic c
 
 console.log('\nseedWatchlist — populates Watchlist from starter cards');
 (function () {
-  // Case A: empty tab → writes header + all 6 cards.
+  // Case A: empty tab → writes header + all 12 starter cards.
   const ctx = loadCode();
   MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')] = makeSheet([]);
   ctx.seedWatchlist();
   let rows = MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')]._rows;
   check('wrote header row', String(rows[0][0]) === 'Card ID' && String(rows[0][6]) === 'Active');
-  check('added all 6 starter cards', rows.length === 7);
+  check('added all 12 starter cards', rows.length === 13);
   check('first card is Lugia (neo1-9)', rows[1][0] === 'neo1-9' && rows[1][1] === 'Lugia' && rows[1][2] === 'Neo Genesis');
+  check('includes Tyranitar (neo2-12)', rows.some(r => r[0] === 'neo2-12' && r[1] === 'Tyranitar'));
+  check('includes Slowking (si1-14)', rows.some(r => r[0] === 'si1-14' && r[1] === 'Slowking'));
+  check('includes both Enteis (basep-34 + neo3-17)', rows.some(r => r[0] === 'basep-34') && rows.some(r => r[0] === 'neo3-17'));
+  check('does NOT include Charizard (removed)', !rows.some(r => r[0] === 'base1-4'));
   check('Active column set TRUE', rows[1][6] === true);
   check('threshold columns left blank', rows[1][3] === '' && rows[1][4] === '' && rows[1][5] === '');
 
   // Case B: re-run is idempotent (no duplicates).
   ctx.seedWatchlist();
   rows = MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')]._rows;
-  check('re-run adds no duplicates', rows.length === 7);
+  check('re-run adds no duplicates', rows.length === 13);
 
-  // Case C: header already present (reordered columns) → appends data correctly.
+  // Case C: header already present (reordered columns) + a pre-existing seed card.
   const ctx2 = loadCode();
   MOCK.sheets[ctx_const(ctx2, 'SHEET_WATCHLIST')] = makeSheet([
     ['Active', 'Card Name', 'Card ID', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)'],
-    [true, 'Charizard', 'base1-4', 'Base Set', 200, '', ''] // pre-existing card
+    [true, 'Lugia', 'neo1-9', 'Neo Genesis', 200, '', ''] // pre-existing seed card with a floor
   ]);
   ctx2.seedWatchlist();
   rows = MOCK.sheets[ctx_const(ctx2, 'SHEET_WATCHLIST')]._rows;
-  check('keeps existing pre-filled card', rows[1][2] === 'base1-4' && rows[1][4] === 200);
-  check('skips already-present base1-4', rows.filter(r => r[2] === 'base1-4').length === 1);
-  check('adds remaining 5 cards (1 header + 1 existing + 5 = 7)', rows.length === 7);
-  const lugia = rows.find(r => r[2] === 'neo1-9');
-  check('respects reordered columns (name/id placement)', lugia && lugia[1] === 'Lugia' && lugia[0] === true);
+  check('keeps existing pre-filled card', rows[1][2] === 'neo1-9' && rows[1][4] === 200);
+  check('skips already-present neo1-9 (dedup)', rows.filter(r => r[2] === 'neo1-9').length === 1);
+  check('adds remaining 11 cards (1 header + 1 existing + 11 = 13)', rows.length === 13);
+  const tyr = rows.find(r => r[2] === 'neo2-12');
+  check('respects reordered columns (name/id placement)', tyr && tyr[1] === 'Tyranitar' && tyr[0] === true);
 })();
 
 // resetMock that preserves the freshly-loaded code context's expectation that

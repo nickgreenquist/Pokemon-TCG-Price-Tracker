@@ -5,14 +5,20 @@ the `Watchlist` tab of the Google Sheet — this file is just a human-readable r
 and a place to jot reasoning. Copy the `Card ID` / `Card Name` / `Set` values into
 the sheet to start tracking.
 
-| Card ID | Card Name | Set | Notes |
-|---------|-----------|-----|-------|
-| neo1-9  | Lugia     | Neo Genesis     | White whale — watching for dips |
-| base1-4 | Charizard | Base Set        | Classic — tracking market |
-| base1-2 | Blastoise | Base Set        | Nostalgia pick |
-| neo3-7  | Ho-Oh     | Neo Revelation  | Gen 2 favorite (Rare Holo #7) |
-| neo2-1  | Espeon    | Neo Discovery   | Gen 2 favorite |
-| neo2-13 | Umbreon   | Neo Discovery   | Gen 2 favorite |
+| Card ID  | Card Name | Set | Notes |
+|----------|-----------|-----|-------|
+| neo1-9   | Lugia     | Neo Genesis     | White whale — watching for dips |
+| neo3-7   | Ho-Oh     | Neo Revelation  | Gen 2 favorite (Rare Holo #7) |
+| neo2-1   | Espeon    | Neo Discovery   | Gen 2 favorite |
+| neo2-13  | Umbreon   | Neo Discovery   | Gen 2 favorite |
+| neo2-12  | Tyranitar | Neo Discovery   | Rare Holo #12 |
+| neo2-3   | Hitmontop | Neo Discovery   | Rare Holo #3 |
+| neo1-13  | Skarmory  | Neo Genesis     | Rare Holo #13 |
+| neo3-17  | Entei     | Neo Revelation  | #17 |
+| neo3-22  | Raikou    | Neo Revelation  | #22 |
+| neo3-27  | Suicune   | Neo Revelation  | #27 |
+| basep-34 | Entei     | Wizards Black Star Promos | WOTC promo #34 |
+| si1-14   | Slowking  | Southern Islands | #14 |
 
 ## Finding a card's ID
 

@@ -662,11 +662,17 @@ var WATCHLIST_HEADERS = [
 // set at least one per card in the sheet or no alerts will fire for it.
 var SEED_WATCHLIST = [
   ['neo1-9', 'Lugia', 'Neo Genesis'],
-  ['base1-4', 'Charizard', 'Base Set'],
-  ['base1-2', 'Blastoise', 'Base Set'],
   ['neo3-7', 'Ho-Oh', 'Neo Revelation'],
   ['neo2-1', 'Espeon', 'Neo Discovery'],
-  ['neo2-13', 'Umbreon', 'Neo Discovery']
+  ['neo2-13', 'Umbreon', 'Neo Discovery'],
+  ['neo2-12', 'Tyranitar', 'Neo Discovery'],
+  ['neo2-3', 'Hitmontop', 'Neo Discovery'],
+  ['neo1-13', 'Skarmory', 'Neo Genesis'],
+  ['neo3-17', 'Entei', 'Neo Revelation'],
+  ['neo3-22', 'Raikou', 'Neo Revelation'],
+  ['neo3-27', 'Suicune', 'Neo Revelation'],
+  ['basep-34', 'Entei', 'Wizards Black Star Promos'],
+  ['si1-14', 'Slowking', 'Southern Islands']
 ];
 
 /**
