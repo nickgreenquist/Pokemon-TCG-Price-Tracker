@@ -1,4 +1,4 @@
-# Pokémon TCG Price Tracker — Claude Code Project Plan
+# Pokémon TCG Price Tracker
 
 ## Workflow Rules
 
@@ -18,31 +18,36 @@
 
 ## Context
 
-I want to build a Pokémon TCG price tracker using Google Sheets + Google Apps Script. The tracker will:
+A personal tool for tracking the market prices of vintage Pokémon cards I want to buy
+(e.g. Neo Genesis Lugia) — pure collector/investment use, not deck building. **Built and
+live.** Once a day a Google Apps Script:
 
-- Pull daily card prices from the **pokemontcg.io API** (free, open source)
-- Log price history in a Google Sheet (building its own historic record over time)
-- Send **email alerts** when any of three conditions are met:
-  - Price drops below a fixed dollar threshold
-  - Price drops X% from the tracked historic high
-  - Price drops X% week-over-week
-- Be triggered automatically once per day via a Google Apps Script time-based trigger
-
-This is a personal tool for tracking vintage Pokémon cards I'm interested in buying (e.g. Neo Genesis Lugia, Base Set Charizard). Not for deck building or competitive play — pure collector/investment use.
+- Pulls card prices from the **pokemontcg.io API** (now hosted by Scrydex; the legacy
+  `api.pokemontcg.io/v2` endpoint + a free key from `dev.pokemontcg.io` still work)
+- Logs them to a Google Sheet (a wide grid — one row per date — building its own history)
+- Emails a **daily summary table** of every watched card, with a section flagging cards
+  that hit an alert condition: below a price floor, X% down from the tracked high, or X%
+  week-over-week
+- Runs automatically via a daily time-based trigger (no deploy needed)
 
 ---
 
 ## Project Structure
 
-Create the following directory and files:
+Files live at the repo root (the repo *is* the project — no nested folder):
 
 ```
-pokemon-price-tracker/
-├── README.md
-├── Code.gs              # Main Apps Script — all logic lives here
-├── watchlist.md         # Reference doc: card IDs I'm tracking and why
-└── setup.md             # Step-by-step Google Sheets setup instructions
+.
+├── README.md            # overview + setup summary
+├── Code.gs              # the Apps Script — all logic
+├── watchlist.md         # reference: cards tracked and why (source of truth for the roster)
+├── setup.md             # step-by-step Google Sheets setup
+└── tests/run_tests.js   # Node test harness (mocks Apps Script; dev-only, not deployed)
 ```
+
+The running code lives in the Google Sheet's Apps Script editor — this repo is for version
+control and docs. Changing the code here does **not** update the live script until it's
+pasted into the editor and saved.
 
 ---
 
@@ -74,15 +79,15 @@ can work watch-list-wide with zero per-card setup. A per-card value always overr
 
 ---
 
-## Code.gs — Full Implementation
+## Code.gs — Implementation
 
-The Apps Script should include:
+The Apps Script includes:
 
 ### Core functions
 
 **`getConfig()`**
 - Reads `Config` tab into a key/value object
-- Returns `{ alert_email, api_key }`
+- Always includes `alert_email` and `api_key`; also surfaces any `default_*` threshold keys
 
 **`fetchCardPrice(cardId, apiKey)`**
 - Calls `https://api.pokemontcg.io/v2/cards/${cardId}`
@@ -103,8 +108,8 @@ The Apps Script should include:
 **`getPreviousPrice_(cardId)`**
 - Returns `{ price, date }` for the most recent record strictly before today (movement baseline), or `null`
 
-**`writeDailyPrices_(dateStr, pricesByCard)`**
-- Upserts one row for `dateStr` in the wide grid, creating a column per new card
+**`writeDailyPrices_(dateStr, entries)`** (`entries` = `[{cardId, cardName, price}]`)
+- Upserts one row for `dateStr` in the wide grid, creating a `Name | cardId` column per new card
 - One row per date; idempotent on re-run
 
 **`logAlert(cardId, cardName, alertType, details)`**
@@ -134,7 +139,7 @@ The Apps Script should include:
 
 **`testSingleCard()`**
 - Hardcoded `cardId = "base1-4"` (easy to change)
-- Fetches and logs the price to console
+- Fetches and logs the price + TCGplayer URL to the console
 - Used to verify API key and card ID before adding to watchlist
 
 **`searchCardId()`**
@@ -157,39 +162,25 @@ All three are independent — a single card can trigger multiple alerts in one r
 
 ---
 
-## README.md Content
+## Reference docs
 
-Include:
-- What this project does
-- How to set up the Google Sheet (tab names, column headers)
-- Where to get a free pokemontcg.io API key
-- How to deploy the Apps Script (Extensions → Apps Script)
-- How to set up the daily trigger (clock icon → Add Trigger → runDailyPriceCheck → Day timer)
-- How to find card IDs using `searchCardId()` helper
-- Known limitations (English cards only, no condition-specific pricing, historic high builds over time)
-
----
-
-## watchlist.md Content
-
-Seed this file with my initial cards of interest:
-
-| Card ID | Card Name | Set | Notes |
-|---------|-----------|-----|-------|
-| neo1-9 | Lugia | Neo Genesis | White whale — watching for dips |
-| base1-4 | Charizard | Base Set | Classic — tracking market |
-| base1-2 | Blastoise | Base Set | Nostalgia pick |
-| neo3-10 | Ho-Oh | Neo Revelation | Gen 2 favorite |
-| neo2-1 | Espeon | Neo Discovery | Gen 2 favorite |
-| neo2-13 | Umbreon | Neo Discovery | Gen 2 favorite |
+The repo files are the source of truth — don't duplicate their content here:
+- **`README.md`** — what it does, setup summary, known limitations
+- **`setup.md`** — step-by-step Google Sheet + trigger setup
+- **`watchlist.md`** — the live card roster (IDs verified against the API) and why each is tracked
 
 ---
 
 ## Constraints & Notes
 
-- **No Node.js, no npm, no local runtime** — this is pure Google Apps Script (`.gs` files), which runs entirely inside Google's cloud
-- The `.gs` file uses `UrlFetchApp`, `SpreadsheetApp`, `MailApp`, and `Utilities` — all built-in Apps Script services, no imports needed
-- Keep all logic in a single `Code.gs` file for simplicity
-- The project directory is just for version control and documentation — the actual running code lives in the Google Sheet's Apps Script editor
-- pokemontcg.io free tier: 20,000 requests/day — more than enough for a personal watchlist
-- English cards only — pokemontcg.io does not cover Portuguese/Brazilian card pricing
+- **No Node.js, no npm, no local runtime** for the tracker itself — it's pure Google Apps
+  Script (`.gs`), running entirely in Google's cloud. All logic stays in one `Code.gs`.
+- The `.gs` file uses `UrlFetchApp`, `SpreadsheetApp`, `MailApp`, `Utilities`, `Session` —
+  all built-in Apps Script services, no imports needed.
+- **Verify every card ID against the API before adding it.** Slugs lie: `neo3-10` turned
+  out to be Magneton, not Ho-Oh (the real one is `neo3-7`).
+- **Tests:** `node tests/run_tests.js` mocks the Apps Script services and exercises
+  `Code.gs` in a sandbox. Dev-only, not deployed. Keep them green when changing logic.
+- No deploy step — a saved script + a time-based trigger is all that runs it.
+- pokemontcg.io free tier: 20,000 requests/day — plenty for a personal watchlist.
+- English cards only — pokemontcg.io does not cover Portuguese/Brazilian pricing.

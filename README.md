@@ -1,9 +1,9 @@
 # 🎴 Pokémon TCG Price Tracker
 
 A personal tool for tracking the market prices of vintage Pokémon cards, built on
-**Google Sheets + Google Apps Script**. It pulls daily prices from the free
-[pokemontcg.io](https://pokemontcg.io) API, logs a price history, and emails you when
-a card you're watching dips.
+**Google Sheets + Google Apps Script**. It pulls daily prices from the
+[pokemontcg.io](https://pokemontcg.io) API, logs a price history, and emails you a daily
+summary table — flagging any card that dips below your alert thresholds.
 
 This is a collector/investment tool — for tracking cards I want to buy (e.g. Neo Genesis
 Lugia, Base Set Charizard), not for deck building or competitive play.
@@ -32,10 +32,10 @@ when it falls that far from its tracked high — no per-card setup. A value type
 card's own cell overrides the default. (Optional `default_price_floor` / `default_drop_wow`
 keys work the same way.)
 
-**At most one email per day.** Every triggered card is bundled into a single digest email
-sent once at the end of the daily run — never one email per card. If nothing triggers, no
-email is sent. (This is a deliberate anti-spam guard: a watchlist of dozens of cards can
-never flood your inbox with separate messages.)
+**One email per day.** The whole watchlist is bundled into a single summary email per run —
+never one email per card — so a large watchlist can't flood your inbox. The summary is sent
+**every day** (even when nothing dips); the alerts section simply reads "none today" when no
+card trips a threshold.
 
 ## How it works
 
@@ -46,7 +46,7 @@ Everything lives in one Google Sheet:
 | `Watchlist` | you | Cards to track + per-card alert thresholds |
 | `PriceHistory` | script | Daily log of fetched prices |
 | `Alerts` | script | Log of every alert that fired |
-| `Config` | you | `alert_email` and (optional) `api_key` |
+| `Config` | you | `alert_email`, `api_key`, and optional `default_*` thresholds |
 
 The logic is a single Apps Script file, [`Code.gs`](./Code.gs). The daily entry point is
 `runDailyPriceCheck()`.
@@ -56,8 +56,9 @@ The logic is a single Apps Script file, [`Code.gs`](./Code.gs). The daily entry 
 Full step-by-step instructions are in **[setup.md](./setup.md)**. In short:
 
 1. Create a Google Sheet with the four tabs above.
-2. Get a free API key at [pokemontcg.io](https://pokemontcg.io) (optional — works keyless
-   at a lower rate limit).
+2. Get a free API key at [dev.pokemontcg.io](https://dev.pokemontcg.io) and add it to the
+   `Config` tab. (Recommended: Apps Script runs from shared Google IPs, so keyless requests
+   get rate-limited — HTTP 429 — quickly.)
 3. Paste `Code.gs` into the Sheet's Apps Script editor (Extensions → Apps Script).
 4. Set the project timezone.
 5. Run `testSingleCard()` once to authorize permissions and verify it works.
@@ -112,3 +113,6 @@ the week-over-week tolerance window, duplicate-run protection, and the end-to-en
   a personal watchlist, but worth knowing.
 - **Trigger timing is approximate.** The daily run fires within the hour window you pick,
   with some jitter — not at an exact minute.
+- **API is now part of Scrydex.** The legacy `api.pokemontcg.io/v2` endpoint this uses still
+  works with a free key from [dev.pokemontcg.io](https://dev.pokemontcg.io). If it's ever
+  retired in favor of Scrydex's API, `fetchCardPrice` would need to point at the new endpoint.
