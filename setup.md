@@ -21,10 +21,15 @@ header name), but keep the names as shown.
 
 ### Tab: `PriceHistory` (script maintains this)
 
-| Date | Card ID | Card Name | Market Price ($) |
-|------|---------|-----------|------------------|
+A **wide grid** — one row per date, one column per card (headers labeled `Name | cardId`):
 
-Just add the header row; the script appends data daily.
+| Date | Charizard \| base1-4 | Lugia \| neo1-9 | Umbreon \| neo2-13 |
+|------|------|------|------|
+| 2026-05-24 | 587.84 | 1200.00 | 461.22 |
+
+You don't set this up — just create the tab (you can leave it empty, or put `Date` in A1).
+The script writes the `Date` header and adds a `Name | cardId` column the first time it
+sees each card.
 
 ### Tab: `Alerts` (script maintains this)
 

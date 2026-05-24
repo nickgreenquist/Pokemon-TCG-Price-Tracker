@@ -207,17 +207,48 @@ function fetchCardPrice(cardId, apiKey) {
 // History reads
 // ---------------------------------------------------------------------------
 
-/** Reads PriceHistory once and returns rows as objects for the given card. */
+/**
+ * Extracts the card ID from a PriceHistory column header. Headers are written as
+ * "Name | cardId" (e.g. "Lugia | neo1-9"); the ID is the part after the last "|".
+ * A bare "neo1-9" header (no pipe) is treated as the ID itself.
+ */
+function cardIdFromHeader_(header) {
+  var s = String(header).trim();
+  var idx = s.lastIndexOf('|');
+  return idx === -1 ? s : s.substring(idx + 1).trim();
+}
+
+/** Builds a PriceHistory column header: "Name | cardId", or just the ID if no name. */
+function historyHeaderLabel_(cardName, cardId) {
+  return (cardName && cardName !== cardId) ? (cardName + ' | ' + cardId) : cardId;
+}
+
+/**
+ * Reads PriceHistory and returns this card's recorded prices as objects.
+ *
+ * PriceHistory is a wide grid: row 0 is the header `Date | Name | cardId | …` where each
+ * card column is labeled "Name | cardId", and each data row holds one date plus that day's
+ * price under each card's column. Blank cells (no price recorded that day) are skipped.
+ */
 function getHistoryForCard_(cardId) {
   var sheet = getSheetOrThrow_(SHEET_HISTORY);
-  var rows = sheet.getDataRange().getValues();
+  var values = sheet.getDataRange().getValues();
   var out = [];
-  // Columns: Date | Card ID | Card Name | Market Price ($)
-  for (var i = 1; i < rows.length; i++) { // skip header
-    if (String(rows[i][1]).trim() !== cardId) continue;
-    var price = Number(rows[i][3]);
+  if (!values.length) return out;
+
+  var header = values[0];
+  var col = -1;
+  for (var c = 1; c < header.length; c++) {
+    if (cardIdFromHeader_(header[c]) === cardId) { col = c; break; }
+  }
+  if (col === -1) return out; // card has no column yet
+
+  for (var i = 1; i < values.length; i++) {
+    var raw = values[i][col];
+    if (raw === '' || raw === null || raw === undefined) continue;
+    var price = Number(raw);
     if (!isFinite(price) || price <= 0) continue;
-    var date = parseDate_(rows[i][0]);
+    var date = parseDate_(values[i][0]);
     if (!date) continue;
     out.push({ date: date, price: price });
   }
@@ -262,26 +293,93 @@ function getPriceNDaysAgo(cardId, days) {
   return best;
 }
 
+/**
+ * Returns the most recent recorded price strictly before today (the baseline for
+ * day-over-day movement). Returns { price, date } or null if there's no prior record.
+ */
+function getPreviousPrice_(cardId) {
+  var today = parseDate_(todayStr_());
+  var history = getHistoryForCard_(cardId);
+  var best = null;
+  for (var i = 0; i < history.length; i++) {
+    if (daysBetween_(history[i].date, today) >= 0) continue; // today or future — skip
+    if (best === null || history[i].date.getTime() > best.date.getTime()) {
+      best = history[i];
+    }
+  }
+  return best; // { date, price } or null
+}
+
 // ---------------------------------------------------------------------------
 // History / alert writes
 // ---------------------------------------------------------------------------
 
-/** True if PriceHistory already has a row for this card on this date string. */
-function priceRowExists_(cardId, dateStr) {
+/**
+ * Writes one date's prices into the wide PriceHistory grid.
+ *
+ * - Ensures a `Date` header in A1 and a "Name | cardId" column per card (added on first
+ *   sighting). Columns are matched/keyed by the card ID parsed from the header.
+ * - Upserts the row for `dateStr`: updates it if it already exists (idempotent re-runs),
+ *   otherwise appends a new row. One row per date, always.
+ *
+ * @param {string} dateStr  yyyy-MM-dd
+ * @param {Array<{cardId:string, cardName:string, price:number}>} entries
+ */
+function writeDailyPrices_(dateStr, entries) {
+  if (!entries || !entries.length) return;
+
   var sheet = getSheetOrThrow_(SHEET_HISTORY);
-  var rows = sheet.getDataRange().getValues();
-  for (var i = 1; i < rows.length; i++) {
-    if (String(rows[i][1]).trim() === cardId && formatDate_(parseDate_(rows[i][0])) === dateStr) {
-      return true;
+  var values = sheet.getDataRange().getValues();
+
+  // Header: reuse existing, or start one. Force A1 = "Date".
+  var header = (values.length && values[0].length) ? values[0].slice() : [];
+  if (header.length === 0 || String(header[0]).trim() === '') header[0] = 'Date';
+
+  var colForCard = {};
+  for (var c = 1; c < header.length; c++) {
+    var id = cardIdFromHeader_(header[c]);
+    if (id) colForCard[id] = c;
+  }
+  // Append a "Name | cardId" column for any card not seen before.
+  for (var k = 0; k < entries.length; k++) {
+    if (colForCard[entries[k].cardId] === undefined) {
+      header.push(historyHeaderLabel_(entries[k].cardName, entries[k].cardId));
+      colForCard[entries[k].cardId] = header.length - 1;
     }
   }
-  return false;
-}
+  var width = header.length;
 
-/** Appends a row to PriceHistory. */
-function logPrice(dateStr, cardId, cardName, price) {
-  var sheet = getSheetOrThrow_(SHEET_HISTORY);
-  sheet.appendRow([dateStr, cardId, cardName, price]);
+  // Grow the sheet grid if we added more columns than it currently has.
+  var maxCols = sheet.getMaxColumns();
+  if (width > maxCols) sheet.insertColumnsAfter(maxCols, width - maxCols);
+
+  // (Re)write the header row.
+  sheet.getRange(1, 1, 1, width).setValues([header]);
+
+  // Find today's existing row (1-based), if any.
+  var rowNum = -1;
+  for (var r = 1; r < values.length; r++) {
+    if (formatDate_(parseDate_(values[r][0])) === dateStr) { rowNum = r + 1; break; }
+  }
+
+  // Build the row, preserving other cards' values when updating in place.
+  var rowVals;
+  if (rowNum === -1) {
+    rowVals = new Array(width).fill('');
+  } else {
+    rowVals = values[rowNum - 1].slice();
+    while (rowVals.length < width) rowVals.push('');
+  }
+  rowVals[0] = dateStr;
+  for (var m = 0; m < entries.length; m++) {
+    rowVals[colForCard[entries[m].cardId]] = entries[m].price;
+  }
+
+  if (rowNum === -1) {
+    sheet.appendRow(rowVals);
+  } else {
+    sheet.getRange(rowNum, 1, 1, width).setValues([rowVals]);
+  }
 }
 
 /** Appends a row to Alerts with the current timestamp. */
@@ -295,34 +393,88 @@ function logAlert(cardId, cardName, alertType, details) {
 // Email
 // ---------------------------------------------------------------------------
 
+/** Formats a number as a US dollar string, e.g. 1234.5 → "$1,234.50". */
+function formatMoney_(n) {
+  var parts = Math.abs(n).toFixed(2).split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (n < 0 ? '-$' : '$') + parts.join('.');
+}
+
 /**
- * Sends a plain-text digest of all alerts that fired in this run.
- * @param {string} email
- * @param {Array<{cardName:string, cardId:string, price:number, type:string, details:string}>} alerts
- * @param {string} dateStr
+ * Builds the one-line price + movement summary for a single card entry.
+ * @param {{cardName:string, cardId:string, price:?number, prev:?{price:number}, high:?number}} c
  */
-function sendAlertEmail(email, alerts, dateStr) {
+function summaryLine_(c) {
+  if (c.price === null) {
+    return '  • ' + c.cardName + ' (' + c.cardId + '): price unavailable today (API error)';
+  }
+  var line = '  • ' + c.cardName + ' (' + c.cardId + '): ' + formatMoney_(c.price);
+
+  if (c.prev && c.prev.price > 0) {
+    var delta = c.price - c.prev.price;
+    var pct = delta / c.prev.price * 100;
+    if (delta === 0) {
+      line += '  (— no change since last check)';
+    } else {
+      var arrow = delta > 0 ? '▲' : '▼';
+      line += '  (' + arrow + ' ' + formatMoney_(Math.abs(delta)) +
+              ', ' + (delta > 0 ? '+' : '-') + Math.abs(pct).toFixed(1) + '% since last check)';
+    }
+  } else {
+    line += '  (first recorded price)';
+  }
+
+  if (c.high && c.high > 0 && c.price < c.high) {
+    var fromHigh = (c.high - c.price) / c.high * 100;
+    line += '  — ' + fromHigh.toFixed(1) + '% below high of ' + formatMoney_(c.high);
+  }
+  return line;
+}
+
+/**
+ * Sends the daily summary email: current price + movement for every watched card,
+ * followed by an ALERTS section. Sent every run (not only when alerts fire).
+ *
+ * @param {string} email
+ * @param {{date:string, cards:Array, totalAlerts:number}} summary
+ */
+function sendDailySummaryEmail(email, summary) {
   if (!email) {
-    Logger.log('sendAlertEmail: no alert_email configured; skipping email.');
+    Logger.log('sendDailySummaryEmail: no alert_email configured; skipping email.');
     return;
   }
-  if (!alerts || !alerts.length) return;
-
-  var subject = '🎴 Pokémon Price Alert — ' + alerts.length + ' card(s) — ' + dateStr;
+  var cards = summary.cards || [];
+  var priced = 0;
+  for (var i = 0; i < cards.length; i++) {
+    if (cards[i].price !== null) priced++;
+  }
 
   var lines = [];
-  lines.push('Pokémon TCG price alerts for ' + dateStr + ':');
+  lines.push('Pokémon TCG daily summary — ' + summary.date);
   lines.push('');
-  for (var i = 0; i < alerts.length; i++) {
-    var a = alerts[i];
-    lines.push('• ' + a.cardName + ' (' + a.cardId + ') — $' + a.price.toFixed(2));
-    lines.push('    ' + a.type + ': ' + a.details);
+  lines.push('PRICES');
+  for (var j = 0; j < cards.length; j++) {
+    lines.push(summaryLine_(cards[j]));
   }
   lines.push('');
 
-  var url = SpreadsheetApp.getActiveSpreadsheet().getUrl();
-  lines.push('Open the tracker: ' + url);
+  if (summary.totalAlerts > 0) {
+    lines.push('🚨 ALERTS (' + summary.totalAlerts + ')');
+    for (var k = 0; k < cards.length; k++) {
+      var c = cards[k];
+      for (var a = 0; a < c.alerts.length; a++) {
+        lines.push('  • ' + c.cardName + ' (' + c.cardId + '): ' +
+                   c.alerts[a].type + ' — ' + c.alerts[a].details);
+      }
+    }
+  } else {
+    lines.push('ALERTS: none today.');
+  }
+  lines.push('');
+  lines.push('Open the tracker: ' + SpreadsheetApp.getActiveSpreadsheet().getUrl());
 
+  var subject = '🎴 Pokémon Daily — ' + priced + ' card(s), ' +
+                summary.totalAlerts + ' alert(s) — ' + summary.date;
   MailApp.sendEmail(email, subject, lines.join('\n'));
 }
 
@@ -385,7 +537,8 @@ function evaluateAlerts_(card, currentPrice) {
 
 /**
  * Daily entry point. Reads the Watchlist, fetches + logs each active card's
- * price, evaluates alert conditions, and emails a digest if anything fired.
+ * price, evaluates alert conditions, and emails a daily summary (current prices +
+ * movement + an alerts section) every run — not only when alerts fire.
  */
 function runDailyPriceCheck() {
   var config = getConfig();
@@ -412,7 +565,9 @@ function runDailyPriceCheck() {
     throw new Error('Watchlist is missing required "Card ID" / "Card Name" columns. See setup.md.');
   }
 
-  var emailAlerts = [];
+  var cards = [];           // one summary entry per active card
+  var priceEntries = [];    // {cardId, cardName, price}, written to PriceHistory once at the end
+  var totalAlerts = 0;
 
   for (var i = 1; i < rows.length; i++) {
     var row = rows[i];
@@ -434,34 +589,39 @@ function runDailyPriceCheck() {
     var price = fetchCardPrice(cardId, config.api_key);
     Utilities.sleep(API_SLEEP_MS);
 
+    var entry = { cardId: cardId, cardName: card.cardName, price: price, prev: null, high: null, alerts: [] };
+
     if (price === null) {
-      Logger.log('runDailyPriceCheck: skipping ' + cardId + ' (no price).');
+      Logger.log('runDailyPriceCheck: ' + cardId + ' has no price; included as unavailable.');
+      cards.push(entry);
       continue;
     }
 
-    // Log today's price (guard against duplicate same-day rows).
-    if (!priceRowExists_(cardId, today)) {
-      logPrice(today, cardId, card.cardName, price);
+    // Capture movement context BEFORE today's row is written. getHistoricHigh /
+    // getPreviousPrice_ exclude today's date, so re-runs stay correct too.
+    entry.prev = getPreviousPrice_(cardId);
+    entry.high = getHistoricHigh(cardId);
+
+    // Evaluate alerts against history that does NOT yet include today.
+    entry.alerts = evaluateAlerts_(card, price);
+    for (var j = 0; j < entry.alerts.length; j++) {
+      logAlert(cardId, card.cardName, entry.alerts[j].type, entry.alerts[j].details);
+      totalAlerts++;
     }
 
-    // Evaluate alerts using history that does NOT include today's row.
-    var triggered = evaluateAlerts_(card, price);
-    for (var j = 0; j < triggered.length; j++) {
-      logAlert(cardId, card.cardName, triggered[j].type, triggered[j].details);
-      emailAlerts.push({
-        cardName: card.cardName,
-        cardId: cardId,
-        price: price,
-        type: triggered[j].type,
-        details: triggered[j].details
-      });
-    }
+    priceEntries.push({ cardId: cardId, cardName: card.cardName, price: price });
+    cards.push(entry);
   }
 
-  if (emailAlerts.length) {
-    sendAlertEmail(config.alert_email, emailAlerts, today);
+  // One write for the whole day (upserts a single dated row in the wide grid).
+  writeDailyPrices_(today, priceEntries);
+
+  // Always send the daily summary, as long as at least one active card was found.
+  if (cards.length) {
+    sendDailySummaryEmail(config.alert_email, { date: today, cards: cards, totalAlerts: totalAlerts });
   }
-  Logger.log('runDailyPriceCheck: done. ' + emailAlerts.length + ' alert(s) fired.');
+  Logger.log('runDailyPriceCheck: done. ' + cards.length + ' card(s) summarized, ' +
+             totalAlerts + ' alert(s) fired.');
 }
 
 /**

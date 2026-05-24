@@ -49,7 +49,10 @@ The Google Sheet needs four tabs:
 Headers: `Card ID | Card Name | Set Name | Price Floor ($) | Drop from High (%) | Drop WoW (%) | Active`
 
 ### `PriceHistory` tab (script-maintained)
-Headers: `Date | Card ID | Card Name | Market Price ($)`
+Wide grid — one row per date, one column per card. Each card-column header is labeled
+`Name | cardId` (e.g. `Lugia | neo1-9`); the script matches the column by the ID after the
+`|`, so a bare-ID header still works. The script creates the `Date` header and adds a
+column the first time it sees each card. Just create the tab; you can leave it empty.
 
 ### `Alerts` tab (script-maintained)
 Headers: `Timestamp | Card ID | Card Name | Alert Type | Details`
@@ -85,27 +88,29 @@ The Apps Script should include:
 - Returns price as a number or `null` on failure
 
 **`getHistoricHigh(cardId)`**
-- Scans `PriceHistory` tab for all rows matching cardId
-- Returns the highest price ever recorded, or `null` if no history yet
+- Reads the card's column in the wide `PriceHistory` grid, EXCLUDING today's row
+- Returns the highest price ever recorded, or `null` if no prior history
 
 **`getPriceNDaysAgo(cardId, days)`**
-- Scans `PriceHistory` tab for the closest entry to `today - N days` for the given cardId
-- Returns price as a number or `null` if insufficient history
+- Reads the card's column for the entry closest to `today - N days`
+- Returns the price only if within ±2 days of the target, else `null`
 
-**`logPrice(date, cardId, cardName, price)`**
-- Appends a row to `PriceHistory` tab
+**`getPreviousPrice_(cardId)`**
+- Returns `{ price, date }` for the most recent record strictly before today (movement baseline), or `null`
+
+**`writeDailyPrices_(dateStr, pricesByCard)`**
+- Upserts one row for `dateStr` in the wide grid, creating a column per new card
+- One row per date; idempotent on re-run
 
 **`logAlert(cardId, cardName, alertType, details)`**
 - Appends a row to `Alerts` tab with current timestamp
 
-**`sendAlertEmail(email, alerts, dateStr)`**
-- Sends a plain text email digest
-- Subject: `🎴 Pokémon Price Alert — N card(s) — YYYY-MM-DD`
-- Body lists each triggered card with current price and alert details
-- Includes link back to the Google Sheet
-- **At most one email per daily run** — all triggered cards are bundled into a single
-  digest, never one email per card. No alerts = no email. This is a deliberate anti-spam
-  guard so a large watchlist can't flood the inbox.
+**`sendDailySummaryEmail(email, summary)`**
+- Sends a plain-text DAILY SUMMARY every run (not only when alerts fire)
+- `PRICES` section: each card's current price + day-over-day movement + distance below high
+- `ALERTS` section: triggered alerts, or "none today"
+- Subject: `🎴 Pokémon Daily — N card(s), M alert(s) — YYYY-MM-DD`
+- **At most one email per daily run** — everything bundled into one digest, never one per card.
 
 ### Main function
 
@@ -113,11 +118,11 @@ The Apps Script should include:
 - Reads all active rows from `Watchlist` tab
 - For each active card:
   - Fetches current price via `fetchCardPrice()`
-  - Logs price via `logPrice()`
-  - Checks all three alert conditions (skip if threshold cell is blank)
-  - Logs any triggered alerts via `logAlert()`
+  - Captures movement context (`getPreviousPrice_`, `getHistoricHigh`) before today is written
+  - Checks all three alert conditions (skip if threshold cell is blank), logs any via `logAlert()`
   - Sleeps 500ms between API calls
-- Sends a single email digest at the end if any alerts fired (one email per run, max)
+- Writes all of today's prices in one `writeDailyPrices_()` upsert (single dated row)
+- Sends one daily summary email via `sendDailySummaryEmail()` (one email per run, max)
 
 ### Manual helper functions
 

@@ -35,16 +35,39 @@ function approx(a, b) {
 // --- mock Apps Script environment ------------------------------------------
 const TZ = 'Etc/UTC';
 
-// In-memory sheets: name -> 2D array (row 0 = headers).
-function makeSheet(rows) {
+// In-memory sheets: name -> 2D array (row 0 = headers). Mirrors the subset of the
+// SpreadsheetApp Sheet API that Code.gs uses, including getRange/setValues and the
+// column-growth calls used by the wide-grid writer.
+function makeSheet(rows, maxCols) {
   return {
     _rows: rows,
+    _maxCols: maxCols || 26,
     getName() { return '(sheet)'; },
     getDataRange() {
       const self = this;
       return { getValues() { return self._rows; } };
     },
-    appendRow(row) { this._rows.push(row); }
+    appendRow(row) { this._rows.push(row.slice()); },
+    getMaxColumns() { return this._maxCols; },
+    insertColumnsAfter(after, howMany) { this._maxCols += howMany; },
+    _ensure(ri, ci) {
+      while (this._rows.length <= ri) this._rows.push([]);
+      while (this._rows[ri].length <= ci) this._rows[ri].push('');
+    },
+    getRange(r, c, nr, nc) {
+      const self = this;
+      return {
+        setValue(v) { self._ensure(r - 1, c - 1); self._rows[r - 1][c - 1] = v; },
+        setValues(vals) {
+          for (let i = 0; i < vals.length; i++) {
+            for (let j = 0; j < vals[i].length; j++) {
+              self._ensure(r - 1 + i, c - 1 + j);
+              self._rows[r - 1 + i][c - 1 + j] = vals[i][j];
+            }
+          }
+        }
+      };
+    }
   };
 }
 
@@ -129,6 +152,15 @@ function dayStr(offset) {
   return u.getUTCFullYear() + '-' + pad2(u.getUTCMonth() + 1) + '-' + pad2(u.getUTCDate());
 }
 
+// Find a card's column index in a wide PriceHistory grid (headers are "Name | id").
+function histCol(ctx, rows, cardId) {
+  const h = rows[0];
+  for (let c = 1; c < h.length; c++) {
+    if (ctx.cardIdFromHeader_(h[c]) === cardId) return c;
+  }
+  return -1;
+}
+
 // --- API response fixtures --------------------------------------------------
 function apiCard(prices) {
   return { code: 200, body: JSON.stringify({ data: { id: 'x', tcgplayer: { prices } } }) };
@@ -195,60 +227,94 @@ console.log('\nfetchCardPrice — price priority & failure handling');
   check('omits headers when no key', !seenOptions.headers);
 })();
 
-console.log('\ngetHistoricHigh — excludes today');
+// Wide-grid PriceHistory: header is `Date | <cardId> | <cardId> | …`, one row per date.
+console.log('\ngetHistoricHigh — excludes today (wide grid)');
 (function () {
   const ctx = loadCode();
   MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-10), 'base1-4', 'Charizard', 300],
-    [dayStr(-3), 'base1-4', 'Charizard', 250],
-    [dayStr(0), 'base1-4', 'Charizard', 999], // today — must be ignored
-    [dayStr(-5), 'other', 'Other', 5000]
+    ['Date', 'base1-4', 'other'],
+    [dayStr(-10), 300, ''],
+    [dayStr(-3), 250, ''],
+    [dayStr(0), 999, ''],     // today — must be ignored
+    [dayStr(-5), '', 5000]
   ]);
   check('returns highest prior price, ignoring today', ctx.getHistoricHigh('base1-4') === 300);
+  check('reads a different card\'s column independently', ctx.getHistoricHigh('other') === 5000);
 
   const ctx2 = loadCode();
   MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(0), 'neo1-9', 'Lugia', 500] // only today exists
+    ['Date', 'neo1-9'],
+    [dayStr(0), 500] // only today exists
   ]);
   check('null when only today is recorded', ctx2.getHistoricHigh('neo1-9') === null);
 
   const ctx3 = loadCode();
-  MOCK.sheets[ctx_const(ctx3, 'SHEET_HISTORY')] = makeSheet([['Date', 'Card ID', 'Card Name', 'Market Price ($)']]);
+  MOCK.sheets[ctx_const(ctx3, 'SHEET_HISTORY')] = makeSheet([['Date']]);
   check('null when no history at all', ctx3.getHistoricHigh('neo1-9') === null);
+
+  const ctx4 = loadCode();
+  MOCK.sheets[ctx_const(ctx4, 'SHEET_HISTORY')] = makeSheet([['Date', 'base1-4'], [dayStr(-2), 100]]);
+  check('null for a card with no column', ctx4.getHistoricHigh('neo1-9') === null);
 })();
 
-console.log('\ngetPriceNDaysAgo — ±2 day tolerance window');
+console.log('\ngetPriceNDaysAgo — ±2 day tolerance window (wide grid)');
 (function () {
   const ctx = loadCode();
   MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-7), 'base1-4', 'Charizard', 280] // exactly 7 days ago
+    ['Date', 'base1-4'],
+    [dayStr(-7), 280] // exactly 7 days ago
   ]);
   check('exact 7-days-ago match', ctx.getPriceNDaysAgo('base1-4', 7) === 280);
 
   const ctx2 = loadCode();
   MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-9), 'base1-4', 'Charizard', 280] // 2 days off target → within tolerance
+    ['Date', 'base1-4'],
+    [dayStr(-9), 280] // 2 days off target → within tolerance
   ]);
   check('within +2 days counts', ctx2.getPriceNDaysAgo('base1-4', 7) === 280);
 
   const ctx3 = loadCode();
   MOCK.sheets[ctx_const(ctx3, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-3), 'base1-4', 'Charizard', 280] // 4 days off target → too far
+    ['Date', 'base1-4'],
+    [dayStr(-3), 280] // 4 days off target → too far
   ]);
   check('outside tolerance returns null', ctx3.getPriceNDaysAgo('base1-4', 7) === null);
 
   const ctx4 = loadCode();
   MOCK.sheets[ctx_const(ctx4, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-6), 'base1-4', 'Charizard', 290], // 1 day off
-    [dayStr(-9), 'base1-4', 'Charizard', 270]  // 2 days off
+    ['Date', 'base1-4'],
+    [dayStr(-6), 290], // 1 day off
+    [dayStr(-9), 270]  // 2 days off
   ]);
   check('picks closest record to target', ctx4.getPriceNDaysAgo('base1-4', 7) === 290);
+})();
+
+console.log('\ngetPreviousPrice_ / movement formatting (wide grid)');
+(function () {
+  const ctx = loadCode();
+  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
+    ['Date', 'base1-4'],
+    [dayStr(-5), 200],
+    [dayStr(-1), 250], // most recent before today
+    [dayStr(0), 999]   // today — must NOT be the baseline
+  ]);
+  const prev = ctx.getPreviousPrice_('base1-4');
+  check('previous price is most recent before today', prev && prev.price === 250);
+
+  const ctx2 = loadCode();
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([
+    ['Date', 'base1-4'],
+    [dayStr(0), 100] // only today
+  ]);
+  check('null when no prior record exists', ctx2.getPreviousPrice_('base1-4') === null);
+
+  // formatMoney_ + summaryLine_ (upward movement).
+  const ctx3 = loadCode();
+  check('formatMoney_ adds thousands separator', ctx3.formatMoney_(1234.5) === '$1,234.50');
+  const up = ctx3.summaryLine_({ cardName: 'Lugia', cardId: 'neo1-9', price: 1100, prev: { price: 1000 }, high: 1200, alerts: [] });
+  check('upward move shows ▲ and +10.0%', up.indexOf('▲') !== -1 && up.indexOf('+10.0% since last check') !== -1);
+  const flat = ctx3.summaryLine_({ cardName: 'X', cardId: 'x-1', price: 50, prev: { price: 50 }, high: null, alerts: [] });
+  check('flat move shows "no change"', flat.indexOf('no change since last check') !== -1);
 })();
 
 console.log('\nrunDailyPriceCheck — end-to-end alert flow');
@@ -260,10 +326,10 @@ console.log('\nrunDailyPriceCheck — end-to-end alert flow');
     ['base1-4', 'Charizard', 'Base Set', 200, 20, '', true],
     ['neo1-9', 'Lugia', 'Neo Genesis', 50, '', '', false] // inactive — must be skipped
   ]);
-  // History: a prior high of $300 ten days ago (so today's $150 is a 50% drop).
+  // History (wide grid): a prior high of $300 ten days ago (today's $150 is a 50% drop).
   MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-10), 'base1-4', 'Charizard', 300]
+    ['Date', 'base1-4'],
+    [dayStr(-10), 300]
   ]);
   MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')] = makeSheet([
     ['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']
@@ -281,21 +347,28 @@ console.log('\nrunDailyPriceCheck — end-to-end alert flow');
 
   const history = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
   const alerts = MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')]._rows;
+  const base1_4Col = histCol(ctx, history, 'base1-4');
 
-  check('logged today\'s price for active card', history.some(r => r[1] === 'base1-4' && r[0] === dayStr(0) && r[3] === 150));
-  check('did NOT log inactive card', !history.some(r => r[1] === 'neo1-9'));
+  check('upserted today\'s price in the base1-4 column', history.some(r => r[0] === dayStr(0) && r[base1_4Col] === 150));
+  check('did NOT create a column for the inactive card', histCol(ctx, history, 'neo1-9') === -1);
   check('fired floor alert (150 < 200)', alerts.some(r => r[3] === 'Price floor'));
   check('fired drop-from-high alert (50% ≥ 20%)', alerts.some(r => r[3] === 'Drop from high'));
   check('did NOT fire WoW alert (blank threshold)', !alerts.some(r => r[3] === 'Week-over-week drop'));
-  check('sent exactly one digest email', MOCK.sentEmails.length === 1);
-  check('email lists 2 alerts in subject', MOCK.sentEmails[0].subject.indexOf('2 card(s)') !== -1);
-  check('email body references the sheet URL', MOCK.sentEmails[0].body.indexOf(MOCK.url) !== -1);
+  check('sent exactly one summary email', MOCK.sentEmails.length === 1);
+  const body = MOCK.sentEmails[0].body;
+  check('subject counts 1 priced card + 2 alerts', MOCK.sentEmails[0].subject.indexOf('1 card(s), 2 alert(s)') !== -1);
+  check('email has a PRICES section', body.indexOf('PRICES') !== -1);
+  check('email lists Charizard current price', body.indexOf('Charizard (base1-4): $150.00') !== -1);
+  check('email shows movement vs last (▼ from $300 → -50%)', body.indexOf('▼') !== -1 && body.indexOf('-50.0% since last check') !== -1);
+  check('email shows distance below high', body.indexOf('below high of $300.00') !== -1);
+  check('email has ALERTS (2) section', body.indexOf('🚨 ALERTS (2)') !== -1);
+  check('email omits inactive Lugia', body.indexOf('neo1-9') === -1);
+  check('email body references the sheet URL', body.indexOf(MOCK.url) !== -1);
 
-  // Re-run same day: must not duplicate the price row.
-  const beforeRows = history.length;
+  // Re-run same day: must upsert, not append a second row for today.
   ctx.runDailyPriceCheck();
-  const after = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows.filter(r => r[1] === 'base1-4' && r[0] === dayStr(0));
-  check('no duplicate same-day price row on re-run', after.length === 1, 'found ' + after.length);
+  const todayRows = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows.filter((r, idx) => idx > 0 && r[0] === dayStr(0));
+  check('one row per date (no dup on re-run)', todayRows.length === 1, 'found ' + todayRows.length);
 })();
 
 console.log('\nrunDailyPriceCheck — no alerts / null price');
@@ -306,7 +379,7 @@ console.log('\nrunDailyPriceCheck — no alerts / null price');
     ['base1-4', 'Charizard', 'Base Set', 100, '', '', true],
     ['neo1-9', 'Lugia', 'Neo Genesis', 100, '', '', true]
   ]);
-  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([['Date', 'Card ID', 'Card Name', 'Market Price ($)']]);
+  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([['Date']]);
   MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
   MOCK.sheets[ctx_const(ctx, 'SHEET_CONFIG')] = makeSheet([['Key', 'Value'], ['alert_email', 'me@example.com'], ['api_key', '']]);
 
@@ -318,9 +391,16 @@ console.log('\nrunDailyPriceCheck — no alerts / null price');
   ctx.runDailyPriceCheck();
 
   const history = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
-  check('logged price for the card that succeeded', history.some(r => r[1] === 'base1-4' && r[3] === 500));
-  check('did NOT log the card that failed to fetch', !history.some(r => r[1] === 'neo1-9'));
-  check('no email when nothing fires', MOCK.sentEmails.length === 0);
+  const base1_4Col = histCol(ctx, history, 'base1-4');
+  check('logged price for the card that succeeded', base1_4Col !== -1 && history.some(r => r[0] === dayStr(0) && r[base1_4Col] === 500));
+  check('did NOT create a column for the card that failed to fetch', histCol(ctx, history, 'neo1-9') === -1);
+  // New behavior: a summary still goes out even with zero alerts.
+  check('sends daily summary even with no alerts', MOCK.sentEmails.length === 1);
+  const body = MOCK.sentEmails[0].body;
+  check('summary subject shows 0 alerts', MOCK.sentEmails[0].subject.indexOf('0 alert(s)') !== -1);
+  check('ALERTS section says none today', body.indexOf('ALERTS: none today.') !== -1);
+  check('succeeded card shown with price (first record)', body.indexOf('Charizard (base1-4): $500.00') !== -1 && body.indexOf('first recorded price') !== -1);
+  check('failed card shown as unavailable', body.indexOf('Lugia (neo1-9): price unavailable today') !== -1);
 })();
 
 console.log('\ngetConfig — key/value parsing');
@@ -352,8 +432,8 @@ console.log('\nConfig default thresholds — blank per-card cells fall back to C
   ]);
   // Prior high $300 → today $210 is exactly 30% down.
   MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-10), 'base1-4', 'Charizard', 300]
+    ['Date', 'base1-4'],
+    [dayStr(-10), 300]
   ]);
   MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
   // Single global default: 20% drop-from-high.
@@ -377,8 +457,8 @@ console.log('\nConfig default thresholds — blank per-card cells fall back to C
     ['base1-4', 'Charizard', 'Base Set', '', 50, '', true] // per-card 50% beats default 20%
   ]);
   MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-10), 'base1-4', 'Charizard', 300]
+    ['Date', 'base1-4'],
+    [dayStr(-10), 300]
   ]);
   MOCK.sheets[ctx_const(ctx2, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
   MOCK.sheets[ctx_const(ctx2, 'SHEET_CONFIG')] = makeSheet([
@@ -397,8 +477,8 @@ console.log('\nConfig default thresholds — blank per-card cells fall back to C
     ['base1-4', 'Charizard', 'Base Set', '', '', '', true]
   ]);
   MOCK.sheets[ctx_const(ctx3, 'SHEET_HISTORY')] = makeSheet([
-    ['Date', 'Card ID', 'Card Name', 'Market Price ($)'],
-    [dayStr(-10), 'base1-4', 'Charizard', 300]
+    ['Date', 'base1-4'],
+    [dayStr(-10), 300]
   ]);
   MOCK.sheets[ctx_const(ctx3, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
   MOCK.sheets[ctx_const(ctx3, 'SHEET_CONFIG')] = makeSheet([['Key', 'Value'], ['alert_email', 'me@example.com']]);
@@ -407,7 +487,49 @@ console.log('\nConfig default thresholds — blank per-card cells fall back to C
   ctx3.runDailyPriceCheck();
   alerts = MOCK.sheets[ctx_const(ctx3, 'SHEET_ALERTS')]._rows;
   check('no default + blank cell → no alert', alerts.length === 1, 'rows=' + alerts.length);
-  check('no email when all checks disabled', MOCK.sentEmails.length === 0);
+  check('summary still sent (price-only, no alerts)', MOCK.sentEmails.length === 1);
+  check('summary ALERTS section says none', MOCK.sentEmails[0].body.indexOf('ALERTS: none today.') !== -1);
+})();
+
+console.log('\nwriteDailyPrices_ — wide-grid upsert, named headers & dynamic columns');
+(function () {
+  // Empty tab → seeds Date header + a "Name | id" column per card, one dated row.
+  const ctx = loadCode();
+  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([['Date']]);
+  ctx.writeDailyPrices_('2026-05-24', [
+    { cardId: 'base1-4', cardName: 'Charizard', price: 587.84 },
+    { cardId: 'neo1-9', cardName: 'Lugia', price: 1200 }
+  ]);
+  let rows = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
+  check('header A1 is Date', rows[0][0] === 'Date');
+  check('column header is "Name | id"', rows[0][histCol(ctx, rows, 'neo1-9')] === 'Lugia | neo1-9');
+  check('wrote one dated row', rows.length === 2 && rows[1][0] === '2026-05-24');
+  check('prices land under the right columns',
+    rows[1][histCol(ctx, rows, 'base1-4')] === 587.84 && rows[1][histCol(ctx, rows, 'neo1-9')] === 1200);
+
+  // Same date again → upsert (no new row), and a NEW card adds a column.
+  ctx.writeDailyPrices_('2026-05-24', [
+    { cardId: 'base1-4', cardName: 'Charizard', price: 590.00 },
+    { cardId: 'neo2-13', cardName: 'Umbreon', price: 461.22 }
+  ]);
+  rows = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
+  check('still one dated row (upsert, not append)', rows.filter((r, i) => i > 0 && r[0] === '2026-05-24').length === 1);
+  check('updated base1-4 in place', rows[1][histCol(ctx, rows, 'base1-4')] === 590.00);
+  check('preserved neo1-9 (not in second write)', rows[1][histCol(ctx, rows, 'neo1-9')] === 1200);
+  check('added a "Umbreon | neo2-13" column', rows[0][histCol(ctx, rows, 'neo2-13')] === 'Umbreon | neo2-13' && rows[1][histCol(ctx, rows, 'neo2-13')] === 461.22);
+
+  // A second date appends a new row.
+  ctx.writeDailyPrices_('2026-05-25', [{ cardId: 'base1-4', cardName: 'Charizard', price: 575.50 }]);
+  rows = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
+  check('new date appends a row', rows.length === 3 && rows[2][0] === '2026-05-25');
+  check('blank cell where a card had no price that day', rows[2][histCol(ctx, rows, 'neo1-9')] === '');
+
+  // Matching still works when an existing column header is a bare id (legacy).
+  const ctx2 = loadCode();
+  MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')] = makeSheet([['Date', 'base1-4'], ['2026-05-20', 500]]);
+  ctx2.writeDailyPrices_('2026-05-21', [{ cardId: 'base1-4', cardName: 'Charizard', price: 510 }]);
+  rows = MOCK.sheets[ctx_const(ctx2, 'SHEET_HISTORY')]._rows;
+  check('reuses legacy bare-id column (no duplicate)', rows[0].filter(h => ctx2.cardIdFromHeader_(h) === 'base1-4').length === 1);
 })();
 
 console.log('\nseedWatchlist — populates Watchlist from starter cards');

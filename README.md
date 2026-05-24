@@ -11,8 +11,10 @@ Lugia, Base Set Charizard), not for deck building or competitive play.
 ## What it does
 
 - **Pulls daily prices** from the pokemontcg.io API for the cards on your watchlist.
-- **Builds its own price history** in a Google Sheet over time.
-- **Emails alerts** when any of three conditions are met:
+- **Builds its own price history** in a Google Sheet over time (a wide grid: one row per
+  date, one column per card).
+- **Emails a daily summary** every run — current price + day-over-day movement for each
+  card, plus a dedicated alerts section. The alerts fire when any of three conditions are met:
   - **Price floor** — price drops below a fixed dollar amount you set.
   - **Drop from high** — price falls X% from the highest price ever recorded.
   - **Week-over-week** — price falls X% versus ~7 days ago.
