@@ -86,6 +86,9 @@ The Apps Script should include:
 - Subject: `🎴 Pokémon Price Alert — N card(s) — YYYY-MM-DD`
 - Body lists each triggered card with current price and alert details
 - Includes link back to the Google Sheet
+- **At most one email per daily run** — all triggered cards are bundled into a single
+  digest, never one email per card. No alerts = no email. This is a deliberate anti-spam
+  guard so a large watchlist can't flood the inbox.
 
 ### Main function
 
@@ -97,7 +100,7 @@ The Apps Script should include:
   - Checks all three alert conditions (skip if threshold cell is blank)
   - Logs any triggered alerts via `logAlert()`
   - Sleeps 500ms between API calls
-- Sends email digest if any alerts fired
+- Sends a single email digest at the end if any alerts fired (one email per run, max)
 
 ### Manual helper functions
 

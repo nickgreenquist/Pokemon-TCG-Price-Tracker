@@ -22,6 +22,11 @@ Lugia, Base Set Charizard), not for deck building or competitive play.
 All three alert checks are independent and per-card; a single card can trigger more than
 one in a run. Any threshold you leave blank is skipped.
 
+**At most one email per day.** Every triggered card is bundled into a single digest email
+sent once at the end of the daily run — never one email per card. If nothing triggers, no
+email is sent. (This is a deliberate anti-spam guard: a watchlist of dozens of cards can
+never flood your inbox with separate messages.)
+
 ## How it works
 
 Everything lives in one Google Sheet:
