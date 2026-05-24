@@ -1,5 +1,16 @@
 # Pokémon TCG Price Tracker — Claude Code Project Plan
 
+## Workflow Rules
+
+- **Do NOT commit or push code changes until I explicitly say so.** Make the edits, then
+  stop and wait. The Apps Script editor runs a separate copy of `Code.gs`, so I have to
+  manually copy the code in, run the relevant function, and confirm it works before any
+  commit is meaningful.
+- The correct order is: you edit → I copy code into the Apps Script editor and run/test it
+  → I report success → only then do you commit (and push straight to `main`).
+- This applies to code (`Code.gs`, tests). Trivial doc-only edits can follow the same gate
+  unless I say otherwise.
+
 ## Context
 
 I want to build a Pokémon TCG price tracker using Google Sheets + Google Apps Script. The tracker will:
