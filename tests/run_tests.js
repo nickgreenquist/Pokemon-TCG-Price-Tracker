@@ -79,6 +79,7 @@ function resetMock() {
     sentEmails: [],
     logs: [],
     fetchHandler: null,
+    props: {},
     url: 'https://docs.google.com/spreadsheets/d/TEST'
   };
 }
@@ -130,7 +131,20 @@ function buildContext() {
   const Session = { getScriptTimeZone() { return TZ; } };
   const Logger = { log(msg) { MOCK.logs.push(String(msg)); } };
 
-  const context = { SpreadsheetApp, UrlFetchApp, MailApp, Utilities, Session, Logger, console };
+  // Persistent key/value store (mirrors the subset Code.gs uses for URL caching).
+  const PropertiesService = {
+    getScriptProperties() {
+      return {
+        getProperty(k) {
+          return Object.prototype.hasOwnProperty.call(MOCK.props, k) ? MOCK.props[k] : null;
+        },
+        setProperty(k, v) { MOCK.props[k] = String(v); return this; },
+        deleteProperty(k) { delete MOCK.props[k]; return this; }
+      };
+    }
+  };
+
+  const context = { SpreadsheetApp, UrlFetchApp, MailApp, Utilities, Session, Logger, PropertiesService, console };
   context.globalThis = context;
   return context;
 }
@@ -269,6 +283,32 @@ console.log('\nresolveTcgplayerUrl_ — clean product URL out of the affiliate r
     : apiCard({ holofoil: { market: 100 } }, 'https://prices.pokemontcg.io/tcgplayer/neo1-9');
   check('fetchCardPrice emits the resolved clean url',
     ctx.fetchCardPrice('neo1-9').url === 'https://www.tcgplayer.com/product/86903');
+
+  // Caching: a resolved URL is remembered, so a second call serves from cache
+  // without touching the network (the whole point of the timeout fix).
+  let fetchCount = 0;
+  MOCK.fetchHandler = () => {
+    fetchCount++;
+    return { code: 302, headers: { Location: 'https://tcgplayer.pxf.io/scrydex?u=https://tcgplayer.com/product/55555' } };
+  };
+  const firstResolve = ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/cache-me');
+  MOCK.fetchHandler = () => { throw new Error('must not fetch — should be served from cache'); };
+  const secondResolve = ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/cache-me');
+  check('caches a resolved url (one fetch, second call from cache)',
+    firstResolve === 'https://www.tcgplayer.com/product/55555' &&
+    secondResolve === firstResolve && fetchCount === 1);
+
+  // A failed resolution is NOT cached, so it is retried next time.
+  MOCK.fetchHandler = () => ({ code: 200, headers: {} }); // no Location → fail
+  ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/retry-me');
+  let retried = false;
+  MOCK.fetchHandler = () => {
+    retried = true;
+    return { code: 302, headers: { Location: 'https://tcgplayer.pxf.io/scrydex?u=https://tcgplayer.com/product/77777' } };
+  };
+  const afterRetry = ctx.resolveTcgplayerUrl_('https://prices.pokemontcg.io/tcgplayer/retry-me');
+  check('does not cache failures (retries and resolves next time)',
+    retried && afterRetry === 'https://www.tcgplayer.com/product/77777');
 })();
 
 // Wide-grid PriceHistory: header is `Date | <cardId> | <cardId> | …`, one row per date.
@@ -625,7 +665,7 @@ console.log('\nseedWatchlist — populates Watchlist from starter cards');
 
 // resetMock that preserves the freshly-loaded code context's expectation that
 // sheets start empty (used by fetchCardPrice block, which needs no sheets).
-function resetMockSheetsOnly() { MOCK.sheets = {}; MOCK.sentEmails = []; MOCK.logs = []; }
+function resetMockSheetsOnly() { MOCK.sheets = {}; MOCK.sentEmails = []; MOCK.logs = []; MOCK.props = {}; }
 
 // Read a top-level const (e.g. SHEET_HISTORY) out of the loaded sandbox.
 function ctx_const(ctx, name) { return ctx[name]; }

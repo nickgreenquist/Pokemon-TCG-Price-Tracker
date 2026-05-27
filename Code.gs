@@ -26,6 +26,19 @@ var SHEET_CONFIG = 'Config';
 var API_BASE = 'https://api.pokemontcg.io/v2/cards';
 var API_SLEEP_MS = 500; // polite pause between API calls
 
+// Soft time budget for the daily run. Apps Script kills a consumer-account
+// execution at ~6 minutes. We stop fetching NEW cards well before that so there is
+// always time left to write prices + send the email instead of crashing with nothing
+// saved. Kept at 3 min (not 5) on purpose: a single UrlFetchApp call can hang ~2+ min
+// on an upstream 504 and CANNOT be interrupted, so this budget is only checked BETWEEN
+// cards — budget (3m) + one worst-case in-flight hang (~2.5m) must stay under the 6m cap.
+var RUN_TIME_BUDGET_MS = 3 * 60 * 1000;
+
+// Script-Properties key prefix for cached resolved TCGplayer product URLs (see
+// resolveTcgplayerUrl_). Product URLs are stable, so resolving once and reusing
+// avoids a slow affiliate-redirect request on every run.
+var TCG_URL_CACHE_PREFIX = 'tcgurl:';
+
 // Window (in days) around the "N days ago" target within which a recorded
 // price still counts for the week-over-week comparison.
 var WOW_TOLERANCE_DAYS = 2;
@@ -221,6 +234,11 @@ function fetchCardPrice(cardId, apiKey) {
  * redirect URL if anything goes wrong (network, format change, non-pokemontcg
  * URL), so a link is never worse than before.
  *
+ * The result is cached in Script Properties keyed by the (stable) redirect URL,
+ * so the daily run resolves each card's product URL once and reuses it forever
+ * instead of paying for this redirect hop on every run. Only successful
+ * resolutions are cached; failures fall through and are retried next time.
+ *
  * @param {string} redirectUrl  the API's tcgplayer.url
  * @return {string}  a direct tcgplayer.com/product URL, or redirectUrl on failure
  */
@@ -228,6 +246,14 @@ function resolveTcgplayerUrl_(redirectUrl) {
   if (!redirectUrl || redirectUrl.indexOf('prices.pokemontcg.io') === -1) {
     return redirectUrl;
   }
+
+  var cache = getScriptPropsOrNull_();
+  var cacheKey = TCG_URL_CACHE_PREFIX + redirectUrl;
+  if (cache) {
+    var cached = cache.getProperty(cacheKey);
+    if (cached) return cached;
+  }
+
   try {
     var resp = UrlFetchApp.fetch(redirectUrl, {
       method: 'get', followRedirects: false, muteHttpExceptions: true
@@ -239,7 +265,9 @@ function resolveTcgplayerUrl_(redirectUrl) {
       var clean = decodeURIComponent(m[1]);
       if (clean.indexOf('http') === 0) {
         // Normalize to the canonical host so the link lands in one step.
-        return clean.replace(/^https?:\/\/(www\.)?tcgplayer\.com/, 'https://www.tcgplayer.com');
+        clean = clean.replace(/^https?:\/\/(www\.)?tcgplayer\.com/, 'https://www.tcgplayer.com');
+        if (cache) cache.setProperty(cacheKey, clean); // product URLs are stable — remember it
+        return clean;
       }
     }
     Logger.log('resolveTcgplayerUrl_: no u= in Location for ' + redirectUrl);
@@ -247,6 +275,18 @@ function resolveTcgplayerUrl_(redirectUrl) {
     Logger.log('resolveTcgplayerUrl_: failed for ' + redirectUrl + ': ' + err);
   }
   return redirectUrl;
+}
+
+/**
+ * Returns Script Properties for caching, or null if the service is unavailable
+ * (e.g. the test sandbox), in which case callers simply skip caching.
+ */
+function getScriptPropsOrNull_() {
+  try {
+    return PropertiesService.getScriptProperties();
+  } catch (err) {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,16 +309,24 @@ function historyHeaderLabel_(cardName, cardId) {
   return (cardName && cardName !== cardId) ? (cardName + ' | ' + cardId) : cardId;
 }
 
+/** Reads the entire PriceHistory grid once (row 0 = headers). */
+function readHistoryValues_() {
+  return getSheetOrThrow_(SHEET_HISTORY).getDataRange().getValues();
+}
+
 /**
  * Reads PriceHistory and returns this card's recorded prices as objects.
  *
  * PriceHistory is a wide grid: row 0 is the header `Date | Name | cardId | …` where each
  * card column is labeled "Name | cardId", and each data row holds one date plus that day's
  * price under each card's column. Blank cells (no price recorded that day) are skipped.
+ *
+ * `values` is the pre-read grid from readHistoryValues_(); pass it to avoid re-reading the
+ * whole sheet on every call (the daily run reads once and threads it through). When omitted,
+ * the sheet is read on demand, so direct/standalone callers still work unchanged.
  */
-function getHistoryForCard_(cardId) {
-  var sheet = getSheetOrThrow_(SHEET_HISTORY);
-  var values = sheet.getDataRange().getValues();
+function getHistoryForCard_(cardId, values) {
+  if (!values) values = readHistoryValues_();
   var out = [];
   if (!values.length) return out;
 
@@ -306,9 +354,9 @@ function getHistoryForCard_(cardId) {
  * (so a freshly-logged price can't define its own "historic high").
  * Returns null if there is no prior history.
  */
-function getHistoricHigh(cardId) {
+function getHistoricHigh(cardId, values) {
   var today = parseDate_(todayStr_());
-  var history = getHistoryForCard_(cardId);
+  var history = getHistoryForCard_(cardId, values);
   var high = null;
   for (var i = 0; i < history.length; i++) {
     if (daysBetween_(history[i].date, today) === 0) continue; // exclude today
@@ -321,11 +369,11 @@ function getHistoricHigh(cardId) {
  * Returns the recorded price closest to (today - days), but only if that record
  * is within WOW_TOLERANCE_DAYS of the target. Returns null otherwise.
  */
-function getPriceNDaysAgo(cardId, days) {
+function getPriceNDaysAgo(cardId, days, values) {
   var target = parseDate_(todayStr_());
   target = new Date(target.getTime() - days * 24 * 60 * 60 * 1000);
 
-  var history = getHistoryForCard_(cardId);
+  var history = getHistoryForCard_(cardId, values);
   var best = null;
   var bestDiff = null;
   for (var i = 0; i < history.length; i++) {
@@ -343,9 +391,9 @@ function getPriceNDaysAgo(cardId, days) {
  * Returns the most recent recorded price strictly before today (the baseline for
  * day-over-day movement). Returns { price, date } or null if there's no prior record.
  */
-function getPreviousPrice_(cardId) {
+function getPreviousPrice_(cardId, values) {
   var today = parseDate_(todayStr_());
-  var history = getHistoryForCard_(cardId);
+  var history = getHistoryForCard_(cardId, values);
   var best = null;
   for (var i = 0; i < history.length; i++) {
     if (daysBetween_(history[i].date, today) >= 0) continue; // today or future — skip
@@ -610,7 +658,7 @@ function sendDailySummaryEmail(email, summary) {
  * Each threshold is skipped when its cell is blank ('').
  * @return {Array<{type:string, details:string}>} zero or more triggered alerts
  */
-function evaluateAlerts_(card, currentPrice) {
+function evaluateAlerts_(card, currentPrice, historyValues) {
   var triggered = [];
 
   // 1. Price floor.
@@ -623,7 +671,7 @@ function evaluateAlerts_(card, currentPrice) {
 
   // 2. Drop from historic high.
   if (card.dropFromHigh !== '') {
-    var high = getHistoricHigh(card.cardId);
+    var high = getHistoricHigh(card.cardId, historyValues);
     if (high !== null && high > 0) {
       var dropPct = (high - currentPrice) / high * 100;
       if (dropPct >= card.dropFromHigh) {
@@ -638,7 +686,7 @@ function evaluateAlerts_(card, currentPrice) {
 
   // 3. Week-over-week drop.
   if (card.dropWoW !== '') {
-    var weekAgo = getPriceNDaysAgo(card.cardId, 7);
+    var weekAgo = getPriceNDaysAgo(card.cardId, 7, historyValues);
     if (weekAgo !== null && weekAgo > 0) {
       var wowPct = (weekAgo - currentPrice) / weekAgo * 100;
       if (wowPct >= card.dropWoW) {
@@ -691,12 +739,27 @@ function runDailyPriceCheck() {
   var cards = [];           // one summary entry per active card
   var priceEntries = [];    // {cardId, cardName, price}, written to PriceHistory once at the end
   var totalAlerts = 0;
+  var runStart = Date.now();
+
+  // Snapshot PriceHistory once and reuse it for every card's movement/alert lookups,
+  // rather than re-reading the whole sheet ~4× per card. Today's row is written only
+  // after this loop, and the helpers already exclude today, so the snapshot stays correct.
+  var historyValues = readHistoryValues_();
 
   for (var i = 1; i < rows.length; i++) {
     var row = rows[i];
     var cardId = String(row[col.id]).trim();
     if (!cardId) continue;
     if (col.active !== -1 && !isTruthyFlag_(row[col.active])) continue;
+
+    // Stop fetching new cards once the time budget is spent, leaving room to
+    // write prices and email below instead of being killed at the 6-min ceiling.
+    // Whatever has been fetched so far is still saved and summarized.
+    if (Date.now() - runStart > RUN_TIME_BUDGET_MS) {
+      Logger.log('runDailyPriceCheck: time budget reached; stopping after ' +
+                 cards.length + ' card(s) — remaining cards skipped this run.');
+      break;
+    }
 
     // A blank per-card threshold falls back to the matching Config default, so
     // alerts work watch-list-wide without filling in every cell. Per-card values
@@ -710,7 +773,9 @@ function runDailyPriceCheck() {
       dropWoW: resolveThreshold_(col.wow === -1 ? '' : row[col.wow], config.default_drop_wow)
     };
 
+    var cardStart = Date.now();
     var fetched = fetchCardPrice(cardId, config.api_key);
+    Logger.log('runDailyPriceCheck: ' + cardId + ' fetched in ' + (Date.now() - cardStart) + 'ms');
     Utilities.sleep(API_SLEEP_MS);
 
     var price = fetched ? fetched.price : null;
@@ -725,11 +790,11 @@ function runDailyPriceCheck() {
 
     // Capture movement context BEFORE today's row is written. getHistoricHigh /
     // getPreviousPrice_ exclude today's date, so re-runs stay correct too.
-    entry.prev = getPreviousPrice_(cardId);
-    entry.high = getHistoricHigh(cardId);
+    entry.prev = getPreviousPrice_(cardId, historyValues);
+    entry.high = getHistoricHigh(cardId, historyValues);
 
     // Evaluate alerts against history that does NOT yet include today.
-    entry.alerts = evaluateAlerts_(card, price);
+    entry.alerts = evaluateAlerts_(card, price, historyValues);
     for (var j = 0; j < entry.alerts.length; j++) {
       logAlert(cardId, card.cardName, entry.alerts[j].type, entry.alerts[j].details);
       totalAlerts++;
@@ -857,9 +922,12 @@ function seedWatchlist() {
 function testSingleCard() {
   var cardId = 'base1-4'; // ← change me
   var config = getConfig();
+  var t0 = Date.now();
   var result = fetchCardPrice(cardId, config.api_key);
-  Logger.log(result === null ? ('No price found for ' + cardId)
-                             : (cardId + ' market price: $' + result.price + '  ' + result.url));
+  var ms = Date.now() - t0;
+  Logger.log((result === null ? ('No price found for ' + cardId)
+                              : (cardId + ' market price: $' + result.price + '  ' + result.url)) +
+             '  (' + ms + 'ms — run again; a cached URL should be far faster)');
 }
 
 /**
