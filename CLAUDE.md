@@ -89,13 +89,23 @@ The Apps Script includes:
 - Reads `Config` tab into a key/value object
 - Always includes `alert_email` and `api_key`; also surfaces any `default_*` threshold keys
 
-**`fetchCardPrice(cardId, apiKey)`**
-- Calls `https://api.pokemontcg.io/v2/cards/${cardId}`
-- Sets `X-Api-Key` header
-- Extracts market price from `tcgplayer.prices`
+**`fetchCardPricesBatch_(cardIds, apiKey)`** (the daily run's fetch path)
+- Fetches every watched card in ONE parallel `UrlFetchApp.fetchAll()` batch — total
+  wall-clock ≈ the single slowest request, not the sum of all of them
+- This is the fix for slow/flaky upstream days: a few hung cards can no longer starve the
+  rest, so there is **no time budget and no per-call sleep**, and no card is silently dropped
+- Returns a `{ cardId → {price, url} | null }` map (null per card on failure); a whole-batch
+  `fetchAll` error marks every card null so the email still goes out with the full roster
+
+**`fetchCardPrice(cardId, apiKey)`** (single-card wrapper, used by `testSingleCard`)
+- Calls `https://api.pokemontcg.io/v2/cards/${cardId}` with the `X-Api-Key` header
+- Shares price extraction with the batch path via `priceFromResponse_()`
+- Returns `{ price, url }` or `null` on failure
+
+**`priceFromResponse_(cardId, response)`** (shared by both fetch paths)
+- Extracts the market price from one card's API response
 - Price priority: `holofoil` → `unlimitedHolofoil` → `1stEditionHolofoil` → `normal` → `reverseHolofoil` → `1stEditionNormal` → `unlimited` → `1stEdition` (uses each variant's `.market`)
 - Fallback: if none of the above match, uses any variant with a usable `.market` price, so an unrecognized variant key never silently skips a card
-- Returns `{ price, url }` (market price + TCGplayer URL) or `null` on failure
 - `url` is resolved to a clean direct `tcgplayer.com/product/<id>` link via `resolveTcgplayerUrl_()` (see below), not the raw affiliate redirect
 
 **`resolveTcgplayerUrl_(redirectUrl)`**
@@ -132,12 +142,12 @@ The Apps Script includes:
 ### Main function
 
 **`runDailyPriceCheck()`**
-- Reads all active rows from `Watchlist` tab
-- For each active card:
-  - Fetches current price via `fetchCardPrice()`
+- First pass: reads all active rows from `Watchlist` tab into a list (no network yet)
+- Fetches every active card's price in one parallel batch via `fetchCardPricesBatch_()`
+- Then for each card:
   - Captures movement context (`getPreviousPrice_`, `getHistoricHigh`) before today is written
   - Checks all three alert conditions (skip if threshold cell is blank), logs any via `logAlert()`
-  - Sleeps 500ms between API calls
+  - A card that failed to fetch is still summarized as "unavailable" — never silently dropped
 - Writes all of today's prices in one `writeDailyPrices_()` upsert (single dated row)
 - Sends one daily summary email via `sendDailySummaryEmail()` (one email per run, max)
 

@@ -96,14 +96,22 @@ function buildContext() {
     }
   };
 
+  function wrapResponse(res) {
+    return {
+      getResponseCode() { return res.code; },
+      getContentText() { return res.body; },
+      getHeaders() { return res.headers || {}; }
+    };
+  }
+
   const UrlFetchApp = {
     fetch(url, options) {
-      const res = MOCK.fetchHandler(url, options);
-      return {
-        getResponseCode() { return res.code; },
-        getContentText() { return res.body; },
-        getHeaders() { return res.headers || {}; }
-      };
+      return wrapResponse(MOCK.fetchHandler(url, options));
+    },
+    // Parallel batch fetch: one response per request, in order. Each request object
+    // carries its own url (mirrors how Code.gs builds requests for fetchCardPricesBatch_).
+    fetchAll(requests) {
+      return requests.map(req => wrapResponse(MOCK.fetchHandler(req.url, req)));
     }
   };
 
@@ -495,6 +503,61 @@ console.log('\nrunDailyPriceCheck — no alerts / null price');
   check('ALERTS section says none today', body.indexOf('ALERTS: none today.') !== -1);
   check('succeeded card shown with price (first record)', body.indexOf('Charizard (base1-4): $500.00') !== -1 && body.indexOf('first recorded price') !== -1);
   check('failed card shown as unavailable', body.indexOf('Lugia (neo1-9): price unavailable today') !== -1);
+})();
+
+console.log('\nfetchCardPricesBatch_ — parallel batch, per-card result keyed by id');
+(function () {
+  const ctx = loadCode();
+  // 'good' returns a price; 'bad' fails (HTTP 500).
+  MOCK.fetchHandler = (url) => url.indexOf('good') !== -1
+    ? apiCard({ holofoil: { market: 123 } })
+    : { code: 500, body: 'err' };
+  const out = ctx.fetchCardPricesBatch_(['good', 'bad'], 'KEY');
+  check('priced card has its market price', out['good'] && out['good'].price === 123);
+  check('failed card maps to null (not dropped)', out['bad'] === null);
+  check('empty id list returns an empty map', Object.keys(ctx.fetchCardPricesBatch_([], 'KEY')).length === 0);
+
+  // X-Api-Key rides along on every request when a key is present.
+  let sawKey = false;
+  MOCK.fetchHandler = (url, req) => { if (req.headers && req.headers['X-Api-Key'] === 'KEY') sawKey = true; return apiCard({ holofoil: { market: 1 } }); };
+  ctx.fetchCardPricesBatch_(['a', 'b'], 'KEY');
+  check('sends X-Api-Key on batched requests', sawKey);
+})();
+
+console.log('\nrunDailyPriceCheck — every active card appears, none silently dropped');
+(function () {
+  const ctx = loadCode();
+  // Six active cards; two of them (#3 c3, #5 c5) fail to fetch. The whole point of the
+  // fetchAll rewrite: a failure no longer starves the rest, and a failed card is still
+  // listed as "unavailable" rather than vanishing from the email entirely.
+  MOCK.sheets[ctx_const(ctx, 'SHEET_WATCHLIST')] = makeSheet([
+    ['Card ID', 'Card Name', 'Set Name', 'Price Floor ($)', 'Drop from High (%)', 'Drop WoW (%)', 'Active'],
+    ['c1', 'One', 'Set', '', '', '', true],
+    ['c2', 'Two', 'Set', '', '', '', true],
+    ['c3', 'Three', 'Set', '', '', '', true],
+    ['c4', 'Four', 'Set', '', '', '', true],
+    ['c5', 'Five', 'Set', '', '', '', true],
+    ['c6', 'Six', 'Set', '', '', '', true]
+  ]);
+  MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')] = makeSheet([['Date']]);
+  MOCK.sheets[ctx_const(ctx, 'SHEET_ALERTS')] = makeSheet([['Timestamp', 'Card ID', 'Card Name', 'Alert Type', 'Details']]);
+  MOCK.sheets[ctx_const(ctx, 'SHEET_CONFIG')] = makeSheet([['Key', 'Value'], ['alert_email', 'me@example.com'], ['api_key', 'KEY']]);
+
+  MOCK.fetchHandler = (url) => (url.indexOf('c3') !== -1 || url.indexOf('c5') !== -1)
+    ? { code: 500, body: 'err' }
+    : apiCard({ holofoil: { market: 100 } });
+
+  ctx.runDailyPriceCheck();
+
+  const body = MOCK.sentEmails[0].body;
+  check('all six cards appear in the email', ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'].every(id => body.indexOf(id) !== -1));
+  check('the two failed cards are shown as unavailable',
+    body.indexOf('Three (c3): price unavailable today') !== -1 && body.indexOf('Five (c5): price unavailable today') !== -1);
+  check('subject counts 4 priced cards', MOCK.sentEmails[0].subject.indexOf('4 card(s)') !== -1);
+  const history = MOCK.sheets[ctx_const(ctx, 'SHEET_HISTORY')]._rows;
+  check('only the 4 priced cards get history columns',
+    ['c1', 'c2', 'c4', 'c6'].every(id => histCol(ctx, history, id) !== -1) &&
+    histCol(ctx, history, 'c3') === -1 && histCol(ctx, history, 'c5') === -1);
 })();
 
 console.log('\ngetConfig — key/value parsing');

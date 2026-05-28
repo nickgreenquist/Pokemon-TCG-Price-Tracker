@@ -94,8 +94,9 @@ The script can't run on a laptop (it depends on Google's services), so
 node tests/run_tests.js
 ```
 
-Covers price-priority selection, API failure handling, historic-high (excluding today),
-the week-over-week tolerance window, duplicate-run protection, and the end-to-end alert
+Covers price-priority selection, API failure handling, the parallel batch fetch (every
+card attempted, none dropped when some fail), historic-high (excluding today), the
+week-over-week tolerance window, duplicate-run protection, and the end-to-end alert
 + email flow.
 
 ## Known limitations

@@ -24,15 +24,6 @@ var SHEET_ALERTS = 'Alerts';
 var SHEET_CONFIG = 'Config';
 
 var API_BASE = 'https://api.pokemontcg.io/v2/cards';
-var API_SLEEP_MS = 500; // polite pause between API calls
-
-// Soft time budget for the daily run. Apps Script kills a consumer-account
-// execution at ~6 minutes. We stop fetching NEW cards well before that so there is
-// always time left to write prices + send the email instead of crashing with nothing
-// saved. Kept at 3 min (not 5) on purpose: a single UrlFetchApp call can hang ~2+ min
-// on an upstream 504 and CANNOT be interrupted, so this budget is only checked BETWEEN
-// cards — budget (3m) + one worst-case in-flight hang (~2.5m) must stay under the 6m cap.
-var RUN_TIME_BUDGET_MS = 3 * 60 * 1000;
 
 // Script-Properties key prefix for cached resolved TCGplayer product URLs (see
 // resolveTcgplayerUrl_). Product URLs are stable, so resolving once and reusing
@@ -145,11 +136,9 @@ function getConfig() {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the current market price for a card from pokemontcg.io.
- *
- * Price priority: holofoil → unlimitedHolofoil → 1stEditionHolofoil → normal →
- * reverseHolofoil → 1stEditionNormal → unlimited → 1stEdition (uses each variant's
- * `.market`), then a fallback to any variant with a usable market price.
+ * Fetches the current market price for a SINGLE card from pokemontcg.io. Used by the
+ * manual testSingleCard() helper; the daily run fetches every card at once via
+ * fetchCardPricesBatch_(). Both share priceFromResponse_() for price extraction.
  *
  * @param {string} cardId  e.g. "base1-4"
  * @param {string} apiKey  optional; the API works keyless at a lower rate limit
@@ -170,9 +159,74 @@ function fetchCardPrice(cardId, apiKey) {
     Logger.log('fetchCardPrice: request failed for ' + cardId + ': ' + err);
     return null;
   }
+  return priceFromResponse_(cardId, response);
+}
+
+/**
+ * Fetches market prices for many cards in ONE parallel UrlFetchApp.fetchAll batch.
+ *
+ * Total wall-clock ≈ the single slowest request rather than the SUM of every card's
+ * latency, so a few slow or hung cards can no longer starve the rest. (Fetching
+ * sequentially under a time budget used to silently drop the tail of the watchlist
+ * whenever a card near the top hung for ~2 min on a flaky upstream — fetchAll removes
+ * that failure mode and the need for a time budget or per-call sleep entirely.)
+ *
+ * @param {Array<string>} cardIds
+ * @param {string} apiKey  optional; the API works keyless at a lower rate limit
+ * @return {Object<string, ?{price:number, url:string}>}  cardId → price result (null on failure)
+ */
+function fetchCardPricesBatch_(cardIds, apiKey) {
+  var result = {};
+  if (!cardIds || !cardIds.length) return result;
+
+  var requests = [];
+  for (var i = 0; i < cardIds.length; i++) {
+    var req = {
+      url: API_BASE + '/' + encodeURIComponent(cardIds[i]),
+      method: 'get',
+      muteHttpExceptions: true
+    };
+    if (apiKey) req.headers = { 'X-Api-Key': apiKey };
+    requests.push(req);
+  }
+
+  var responses;
+  try {
+    responses = UrlFetchApp.fetchAll(requests);
+  } catch (err) {
+    // A whole-batch failure must not crash the run: mark every card unavailable so the
+    // day's email still goes out with the full roster.
+    Logger.log('fetchCardPricesBatch_: fetchAll failed: ' + err);
+    for (var n = 0; n < cardIds.length; n++) result[cardIds[n]] = null;
+    return result;
+  }
+
+  for (var j = 0; j < cardIds.length; j++) {
+    result[cardIds[j]] = priceFromResponse_(cardIds[j], responses[j]);
+  }
+  return result;
+}
+
+/**
+ * Extracts the market price + resolved TCGplayer URL from one card's API response.
+ * Shared by the single-card fetchCardPrice() and the batched fetchCardPricesBatch_().
+ *
+ * Price priority: holofoil → unlimitedHolofoil → 1stEditionHolofoil → normal →
+ * reverseHolofoil → 1stEditionNormal → unlimited → 1stEdition (uses each variant's
+ * `.market`), then a fallback to any variant with a usable market price.
+ *
+ * @param {string} cardId
+ * @param {HTTPResponse} response  an UrlFetchApp response (from fetch or fetchAll)
+ * @return {?{price:number, url:string}}  market price + TCGplayer URL, or null on failure
+ */
+function priceFromResponse_(cardId, response) {
+  if (!response) {
+    Logger.log('priceFromResponse_: no response for ' + cardId);
+    return null;
+  }
 
   if (response.getResponseCode() !== 200) {
-    Logger.log('fetchCardPrice: HTTP ' + response.getResponseCode() + ' for ' + cardId);
+    Logger.log('priceFromResponse_: HTTP ' + response.getResponseCode() + ' for ' + cardId);
     return null;
   }
 
@@ -180,7 +234,7 @@ function fetchCardPrice(cardId, apiKey) {
   try {
     json = JSON.parse(response.getContentText());
   } catch (err) {
-    Logger.log('fetchCardPrice: bad JSON for ' + cardId + ': ' + err);
+    Logger.log('priceFromResponse_: bad JSON for ' + cardId + ': ' + err);
     return null;
   }
 
@@ -188,7 +242,7 @@ function fetchCardPrice(cardId, apiKey) {
   var prices = tcg && tcg.prices;
   var redirectUrl = (tcg && tcg.url) || '';
   if (!prices) {
-    Logger.log('fetchCardPrice: no tcgplayer price data for ' + cardId);
+    Logger.log('priceFromResponse_: no tcgplayer price data for ' + cardId);
     return null;
   }
 
@@ -210,12 +264,12 @@ function fetchCardPrice(cardId, apiKey) {
   for (var key in prices) {
     var v = prices[key];
     if (v && typeof v.market === 'number' && v.market > 0) {
-      Logger.log('fetchCardPrice: using fallback variant "' + key + '" for ' + cardId);
+      Logger.log('priceFromResponse_: using fallback variant "' + key + '" for ' + cardId);
       return { price: v.market, url: resolveTcgplayerUrl_(redirectUrl) };
     }
   }
 
-  Logger.log('fetchCardPrice: no usable market price for ' + cardId);
+  Logger.log('priceFromResponse_: no usable market price for ' + cardId);
   return null;
 }
 
@@ -736,71 +790,75 @@ function runDailyPriceCheck() {
     throw new Error('Watchlist is missing required "Card ID" / "Card Name" columns. See setup.md.');
   }
 
-  var cards = [];           // one summary entry per active card
-  var priceEntries = [];    // {cardId, cardName, price}, written to PriceHistory once at the end
-  var totalAlerts = 0;
-  var runStart = Date.now();
-
-  // Snapshot PriceHistory once and reuse it for every card's movement/alert lookups,
-  // rather than re-reading the whole sheet ~4× per card. Today's row is written only
-  // after this loop, and the helpers already exclude today, so the snapshot stays correct.
-  var historyValues = readHistoryValues_();
-
+  // First pass: collect every active card (no network yet). A blank per-card threshold
+  // falls back to the matching Config default, so alerts work watch-list-wide without
+  // filling in every cell; a per-card value always wins when present.
+  var activeCards = [];
   for (var i = 1; i < rows.length; i++) {
     var row = rows[i];
     var cardId = String(row[col.id]).trim();
     if (!cardId) continue;
     if (col.active !== -1 && !isTruthyFlag_(row[col.active])) continue;
-
-    // Stop fetching new cards once the time budget is spent, leaving room to
-    // write prices and email below instead of being killed at the 6-min ceiling.
-    // Whatever has been fetched so far is still saved and summarized.
-    if (Date.now() - runStart > RUN_TIME_BUDGET_MS) {
-      Logger.log('runDailyPriceCheck: time budget reached; stopping after ' +
-                 cards.length + ' card(s) — remaining cards skipped this run.');
-      break;
-    }
-
-    // A blank per-card threshold falls back to the matching Config default, so
-    // alerts work watch-list-wide without filling in every cell. Per-card values
-    // always win when present.
-    var card = {
+    activeCards.push({
       cardId: cardId,
       cardName: String(row[col.name]).trim() || cardId,
       setName: col.set === -1 ? '' : String(row[col.set]).trim(),
       priceFloor: resolveThreshold_(col.floor === -1 ? '' : row[col.floor], config.default_price_floor),
       dropFromHigh: resolveThreshold_(col.high === -1 ? '' : row[col.high], config.default_drop_from_high),
       dropWoW: resolveThreshold_(col.wow === -1 ? '' : row[col.wow], config.default_drop_wow)
-    };
+    });
+  }
+  if (!activeCards.length) {
+    Logger.log('runDailyPriceCheck: no active cards in Watchlist.');
+    return;
+  }
 
-    var cardStart = Date.now();
-    var fetched = fetchCardPrice(cardId, config.api_key);
-    Logger.log('runDailyPriceCheck: ' + cardId + ' fetched in ' + (Date.now() - cardStart) + 'ms');
-    Utilities.sleep(API_SLEEP_MS);
+  // Fetch ALL prices in one parallel batch: total time ≈ the slowest single request,
+  // so slow/hung cards no longer starve the rest. Every active card is attempted every
+  // run (no time budget, no per-card sleep), so none can silently vanish from the email.
+  var ids = [];
+  for (var a = 0; a < activeCards.length; a++) ids.push(activeCards[a].cardId);
+  var fetchStart = Date.now();
+  var priceById = fetchCardPricesBatch_(ids, config.api_key);
+  Logger.log('runDailyPriceCheck: fetched ' + ids.length + ' card(s) in ' +
+             (Date.now() - fetchStart) + 'ms');
 
+  var cards = [];           // one summary entry per active card (priced or unavailable)
+  var priceEntries = [];    // {cardId, cardName, price}, written to PriceHistory once at the end
+  var totalAlerts = 0;
+
+  // Snapshot PriceHistory once and reuse it for every card's movement/alert lookups,
+  // rather than re-reading the whole sheet ~4× per card. Today's row is written only
+  // after this loop, and the helpers already exclude today, so the snapshot stays correct.
+  var historyValues = readHistoryValues_();
+
+  for (var k = 0; k < activeCards.length; k++) {
+    var card = activeCards[k];
+    var fetched = priceById[card.cardId];
     var price = fetched ? fetched.price : null;
-    var entry = { cardId: cardId, cardName: card.cardName, setName: card.setName, price: price,
-                  url: fetched ? fetched.url : '', prev: null, high: null, alerts: [] };
+    var entry = { cardId: card.cardId, cardName: card.cardName, setName: card.setName,
+                  price: price, url: fetched ? fetched.url : '',
+                  prev: null, high: null, alerts: [] };
 
     if (price === null) {
-      Logger.log('runDailyPriceCheck: ' + cardId + ' has no price; included as unavailable.');
+      Logger.log('runDailyPriceCheck: ' + card.cardId + ' has no price; included as unavailable.');
       cards.push(entry);
       continue;
     }
 
     // Capture movement context BEFORE today's row is written. getHistoricHigh /
     // getPreviousPrice_ exclude today's date, so re-runs stay correct too.
-    entry.prev = getPreviousPrice_(cardId, historyValues);
-    entry.high = getHistoricHigh(cardId, historyValues);
+    entry.prev = getPreviousPrice_(card.cardId, historyValues);
+    entry.high = getHistoricHigh(card.cardId, historyValues);
 
     // Evaluate alerts against history that does NOT yet include today.
     entry.alerts = evaluateAlerts_(card, price, historyValues);
     for (var j = 0; j < entry.alerts.length; j++) {
-      logAlert(cardId, card.cardName, entry.alerts[j].type, entry.alerts[j].details);
+      logAlert(card.cardId, card.cardName, entry.alerts[j].type, entry.alerts[j].details);
       totalAlerts++;
     }
 
-    priceEntries.push({ cardId: cardId, cardName: card.cardName, price: price });
+    priceEntries.push({ cardId: card.cardId, cardName: card.cardName, price: price });
     cards.push(entry);
   }
 
@@ -922,12 +980,9 @@ function seedWatchlist() {
 function testSingleCard() {
   var cardId = 'base1-4'; // ← change me
   var config = getConfig();
-  var t0 = Date.now();
   var result = fetchCardPrice(cardId, config.api_key);
-  var ms = Date.now() - t0;
-  Logger.log((result === null ? ('No price found for ' + cardId)
-                              : (cardId + ' market price: $' + result.price + '  ' + result.url)) +
-             '  (' + ms + 'ms — run again; a cached URL should be far faster)');
+  Logger.log(result === null ? ('No price found for ' + cardId)
+                             : (cardId + ' market price: $' + result.price + '  ' + result.url));
 }
 
 /**
