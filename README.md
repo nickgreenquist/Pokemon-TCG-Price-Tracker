@@ -1,14 +1,25 @@
-# 🎴 Pokémon TCG Price Tracker
+# 🎴 Pokémon TCG Tracker
 
-A personal tool for tracking the market prices of vintage Pokémon cards, built on
-**Google Sheets + Google Apps Script**. It pulls daily prices from the
+Two personal collector/investment tools for vintage Pokémon cards, in one repo:
+
+- **💰 Price Tracker** — a Google Apps Script that pulls daily market prices for a watchlist
+  and emails a daily summary with alerts. (Documented below.)
+- **📒 Pokédex Completion Tracker** — a local Python script that builds a Google Sheet
+  checklist for completing the National Pokédex (#1–1025, Gen 1–9) in TCG-card form. See
+  **[`pokedex-tracker/`](./pokedex-tracker/)**.
+
+Both are for collecting/investing (cards I want to buy, e.g. Neo Genesis Lugia, Base Set
+Charizard) — not deck building or competitive play.
+
+---
+
+## 💰 Price Tracker
+
+Built on **Google Sheets + Google Apps Script**: pulls daily prices from the
 [pokemontcg.io](https://pokemontcg.io) API, logs a price history, and emails you a daily
 summary table — flagging any card that dips below your alert thresholds.
 
-This is a collector/investment tool — for tracking cards I want to buy (e.g. Neo Genesis
-Lugia, Base Set Charizard), not for deck building or competitive play.
-
-## What it does
+### What it does
 
 - **Pulls daily prices** from the pokemontcg.io API for the cards on your watchlist.
 - **Builds its own price history** in a Google Sheet over time (a wide grid: one row per
@@ -37,7 +48,7 @@ never one email per card — so a large watchlist can't flood your inbox. The su
 **every day** (even when nothing dips); the alerts section simply reads "none today" when no
 card trips a threshold.
 
-## How it works
+### How it works
 
 Everything lives in one Google Sheet:
 
@@ -51,7 +62,7 @@ Everything lives in one Google Sheet:
 The logic is a single Apps Script file, [`Code.gs`](./Code.gs). The daily entry point is
 `runDailyPriceCheck()`.
 
-## Setup
+### Setup
 
 Full step-by-step instructions are in **[setup.md](./setup.md)**. In short:
 
@@ -64,26 +75,26 @@ Full step-by-step instructions are in **[setup.md](./setup.md)**. In short:
 5. Run `testSingleCard()` once to authorize permissions and verify it works.
 6. Add a daily time-based trigger on `runDailyPriceCheck()`.
 
-## Finding card IDs
+### Finding card IDs
 
 Use the `searchCardId()` helper in `Code.gs`: set the `cardName` variable, run it, and
 read the execution log for matching `id | name | set` results. See
 [watchlist.md](./watchlist.md) for the cards this tracker ships with.
 
-## Repository layout
+### Repository layout
 
 ```
 .
-├── README.md          # this file
-├── Code.gs            # the Apps Script — all logic
-├── watchlist.md       # reference: cards tracked and why
-├── setup.md           # step-by-step Google Sheets setup
-└── tests/
-    └── run_tests.js   # local dev test harness (not deployed)
+├── README.md            # this file (both tools)
+├── Code.gs              # Price Tracker — the Apps Script (all logic)
+├── watchlist.md         # Price Tracker — cards tracked and why
+├── setup.md             # Price Tracker — step-by-step Google Sheets setup
+├── tests/run_tests.js   # Price Tracker — local dev test harness (not deployed)
+└── pokedex-tracker/     # Pokédex Completion Tracker (Python → CSV; has its own README)
 ```
 
-> The repo is for version control and docs. The code that actually runs lives in the
-> Google Sheet's Apps Script editor.
+> The Price Tracker code that actually runs lives in the Google Sheet's Apps Script editor —
+> this repo is for version control and docs.
 
 ### Local tests
 
@@ -99,7 +110,7 @@ card attempted, none dropped when some fail), historic-high (excluding today), t
 week-over-week tolerance window, duplicate-run protection, and the end-to-end alert
 + email flow.
 
-## Known limitations
+### Known limitations
 
 - **English cards only.** pokemontcg.io does not cover Portuguese/Brazilian pricing.
 - **Raw/ungraded prices.** Uses TCGplayer market price for one variant per card, holo
@@ -117,3 +128,25 @@ week-over-week tolerance window, duplicate-run protection, and the end-to-end al
 - **API is now part of Scrydex.** The legacy `api.pokemontcg.io/v2` endpoint this uses still
   works with a free key from [dev.pokemontcg.io](https://dev.pokemontcg.io). If it's ever
   retired in favor of Scrydex's API, `fetchCardPrice` would need to point at the new endpoint.
+
+---
+
+## 📒 Pokédex Completion Tracker
+
+A separate tool in **[`pokedex-tracker/`](./pokedex-tracker/)** for a different goal:
+tracking progress toward **collecting the whole National Pokédex (#1–1025, Gen 1–9) in card
+form** — one row per *Pokémon*, not per card.
+
+Unlike the Price Tracker, this is a **local Python script** (no Apps Script, no server, no
+recurring job). It builds a CSV you import into a Google Sheet once, then maintain by hand:
+
+- **Cheapest** card per Pokémon (any print) from pokemontcg.io, with its price.
+- **First Set** cards — the first English **expansion** *and* first **promo** each Pokémon
+  appeared in (sourced from **Bulbapedia** for accuracy, since pokemontcg.io's promo release
+  dates are unreliable), each with a price, plus a flag for which came first.
+- Two checkbox tracks — *own any card* and *own a first-set card* — and a Progress tab with
+  per-generation completion %.
+
+Both data sources are cached locally, so after one fetch the build runs fully offline.
+See **[`pokedex-tracker/README.md`](./pokedex-tracker/README.md)** and
+**[`pokedex-tracker/setup.md`](./pokedex-tracker/setup.md)**.
