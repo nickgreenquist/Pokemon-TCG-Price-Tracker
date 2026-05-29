@@ -1,0 +1,14 @@
+# Cached pokemontcg.io card catalog — large; regenerate on demand (build.py, or --refresh).
+ptcg_cards.json
+
+# Generated output / scratch — derivable from the scripts + caches.
+pokedex.csv
+first_sets_preview.csv
+ptcg_sets.json
+
+# Python
+__pycache__/
+*.pyc
+
+# NOTE: bulbapedia_first_sets.json IS tracked on purpose — build.py needs it and it's
+# expensive to regenerate (a ~1025-page Bulbapedia scrape).
