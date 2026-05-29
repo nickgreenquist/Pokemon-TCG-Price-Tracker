@@ -36,12 +36,13 @@ from pokedex_data import POKEDEX, DEX_MIN, DEX_MAX, gen_for
 
 BULBA_CACHE = "bulbapedia_first_sets.json"  # produced by scrape_bulbapedia.py
 PTCG_CACHE = "ptcg_cards.json"              # local dump of the pokemontcg.io card catalog
+PTCG_CACHE_PARTIAL = PTCG_CACHE + ".partial"  # in-progress fetch state; auto-resumed by --refresh
 
 # ── Local API key (optional) ────────────────────────────────────────────────
 # Paste your pokemontcg.io key here to run without setting an env var, then blank
 # it again before committing. Resolution order: --api-key flag > POKEMONTCG_API_KEY
 # env var > this constant. ⚠️ Leave this as "" in committed code.
-API_KEY = ""
+API_KEY = "71a0ae1f-bdd3-465b-800d-203578073966"
 # ─────────────────────────────────────────────────────────────────────────────
 
 API_BASE = "https://api.pokemontcg.io/v2"
@@ -69,14 +70,49 @@ def fetch_json(url, api_key, max_retries=6, timeout=60):
     return None
 
 
+def _save_partial(cards, next_page, total):
+    """Atomic-write the in-progress fetch state so a crash can resume on the next --refresh."""
+    tmp = PTCG_CACHE_PARTIAL + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"cards": cards, "next_page": next_page, "total": total}, fh, ensure_ascii=False)
+    os.replace(tmp, PTCG_CACHE_PARTIAL)
+
+
+def _load_partial():
+    """Returns (cards, next_page, total) from a prior interrupted --refresh, or None."""
+    if not os.path.exists(PTCG_CACHE_PARTIAL):
+        return None
+    try:
+        with open(PTCG_CACHE_PARTIAL, encoding="utf-8") as fh:
+            state = json.load(fh)
+        cards = state.get("cards") or []
+        next_page = int(state.get("next_page") or 1)
+        total = state.get("total")
+        if not cards or next_page <= 1:
+            return None
+        return cards, next_page, total
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"  partial cache unreadable ({e}); starting fresh from page 1.", file=sys.stderr)
+        return None
+
+
 def fetch_all_cards(api_key):
     """
-    Pages through /cards filtered to nationalPokedexNumbers:[1 TO 1025].
-    A page that fails after all retries ABORTS the build (raises) rather than silently
-    truncating — a partial card set would produce a wrong/incomplete CSV.
+    Pages through /cards filtered to nationalPokedexNumbers:[DEX_MIN TO DEX_MAX].
+    Checkpoints completed pages to PTCG_CACHE_PARTIAL after every page so a crash can
+    resume from the next page on the next --refresh. The partial file is never used to
+    build the CSV — only the post-fetch atomic rename to PTCG_CACHE feeds the build,
+    so a truncated catalog can't produce a wrong/incomplete CSV.
+    A page that fails after all retries ABORTS (raises) and leaves the partial intact.
     """
     q = urllib.parse.quote(f"nationalPokedexNumbers:[{DEX_MIN} TO {DEX_MAX}]")
-    all_cards, page, total = [], 1, None
+    resumed = _load_partial()
+    if resumed:
+        all_cards, page, total = resumed
+        print(f"  resuming from page {page} ({len(all_cards)} cards already in "
+              f"{PTCG_CACHE_PARTIAL}).")
+    else:
+        all_cards, page, total = [], 1, None
     while True:
         url = (f"{API_BASE}/cards?q={q}&select={urllib.parse.quote(SELECT)}"
                f"&page={page}&pageSize={PAGE_SIZE}")
@@ -85,7 +121,7 @@ def fetch_all_cards(api_key):
             raise RuntimeError(
                 f"page {page} failed after all retries (got {len(all_cards)}/"
                 f"{total if total else '?'} cards). Aborting to avoid a truncated CSV — "
-                "re-run when the API is responding.")
+                f"re-run --refresh to resume from page {page} ({PTCG_CACHE_PARTIAL} kept).")
         batch = data.get("data") or []
         if not batch:
             break  # legitimate end of results
@@ -93,11 +129,20 @@ def fetch_all_cards(api_key):
         if total is None:
             total = data.get("totalCount")
         print(f"  page {page}: +{len(batch)} ({len(all_cards)}/{total} total)")
+        _save_partial(all_cards, page + 1, total)
         if total is not None and len(all_cards) >= total:
             break
         page += 1
         time.sleep(0.3)
-    return all_cards
+    # Dedupe by card id: resuming across an API mutation (new card on an earlier page
+    # shifts later pages by one) could otherwise double-count the boundary card.
+    seen, deduped = set(), []
+    for c in all_cards:
+        cid = c.get("id")
+        if cid and cid not in seen:
+            seen.add(cid)
+            deduped.append(c)
+    return deduped
 
 
 def card_market_price(card):
@@ -217,8 +262,9 @@ def build_rows(by_dex, bulba):
 def get_cards(api_key, refresh):
     """
     Returns the pokemontcg.io card catalog, from the local PTCG_CACHE if present, else by
-    fetching once and dumping it to PTCG_CACHE. After one good fetch, every rebuild runs
-    offline — no more API hits. `--refresh` forces a re-fetch (e.g. for fresher prices).
+    fetching once and atomic-renaming the completed PTCG_CACHE_PARTIAL onto PTCG_CACHE.
+    After one good fetch, every rebuild runs offline — no more API hits. `--refresh`
+    forces a re-fetch (auto-resuming from any existing PTCG_CACHE_PARTIAL).
     """
     if os.path.exists(PTCG_CACHE) and not refresh:
         with open(PTCG_CACHE, encoding="utf-8") as fh:
@@ -229,9 +275,15 @@ def get_cards(api_key, refresh):
     if not api_key:
         print("No API key set — fetching unauthenticated (lower rate limits).", file=sys.stderr)
     print(f"Fetching Pokémon cards (National Dex {DEX_MIN}–{DEX_MAX}) from the API...")
-    cards = fetch_all_cards(api_key)  # raises RuntimeError on a failed page (no partial cache)
-    with open(PTCG_CACHE, "w", encoding="utf-8") as fh:
+    cards = fetch_all_cards(api_key)  # raises RuntimeError on a failed page; PTCG_CACHE_PARTIAL kept for resume
+    # Atomic-promote the now-complete deduped catalog onto PTCG_CACHE so the CSV build
+    # only ever sees a fully-populated file.
+    tmp = PTCG_CACHE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(cards, fh, ensure_ascii=False)
+    os.replace(tmp, PTCG_CACHE)
+    if os.path.exists(PTCG_CACHE_PARTIAL):
+        os.remove(PTCG_CACHE_PARTIAL)
     print(f"Fetched and cached {len(cards)} cards to {PTCG_CACHE}.")
     return cards
 

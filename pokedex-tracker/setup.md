@@ -18,9 +18,17 @@ POKEMONTCG_API_KEY=your_key python3 build.py
 - Output: `pokedex.csv` (1025 rows + header).
 
 `build.py` reads `bulbapedia_first_sets.json` for the first-expansion / first-promo data. It
-ships in the repo; to refresh it from Bulbapedia, run `python3 scrape_bulbapedia.py` first.
+ships in the repo. To refresh it from Bulbapedia, the pipeline is two steps:
 
-No pip install needed — both scripts use only the Python standard library.
+```bash
+python3 scrape_bulbapedia.py   # ~5–10 min: dumps wikitext → bulbapedia_raw.json (gitignored, resumable)
+python3 parse_bulbapedia.py    # seconds: parses raw → bulbapedia_first_sets.json
+```
+
+Once `bulbapedia_raw.json` exists locally you can re-run `parse_bulbapedia.py` any time
+(e.g. after changing the row-parser) without re-hitting the network.
+
+No pip install needed — all scripts use only the Python standard library.
 
 ## 2. Import into a Google Sheet
 

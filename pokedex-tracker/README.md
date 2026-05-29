@@ -18,9 +18,12 @@ into Google Sheets once, then maintain by hand.
 
 - **Skeleton** — the #001–1025 checklist (name + types per Pokémon) lives in `pokedex_data.py`
   (`POKEDEX`). Types are current national-dex typings.
-- **First-set truth** — `scrape_bulbapedia.py` reads each Pokémon's "<Name> (TCG)" page via
-  the MediaWiki API and records its first English **expansion** and first English **promo**
-  (plus which came first) into `bulbapedia_first_sets.json`. This is why we don't use
+- **First-set truth** — a two-step pipeline. `scrape_bulbapedia.py` dumps each Pokémon's
+  "<Name> (TCG)" page wikitext to `bulbapedia_raw.json` (gitignored). `parse_bulbapedia.py`
+  reads that raw cache offline and walks each page's chronological card-release table to
+  record the first English **expansion** and first English **promo** (plus which came first)
+  into `bulbapedia_first_sets.json` (tracked). Splitting fetch from parse means the
+  row-parser can be iterated on without re-hitting the network. This is why we don't use
   pokemontcg.io release dates for first-set: promo umbrella sets there carry one misleadingly
   early date, so late promos wrongly beat the real debut.
 - **Card picks** — `build.py` reads the **pokemontcg.io** card catalog (every card with
@@ -41,9 +44,10 @@ into Google Sheets once, then maintain by hand.
 ```
 pokedex-tracker/
 ├── build.py                   # builder: card catalog + Bulbapedia cache → pokedex.csv
-├── scrape_bulbapedia.py       # one-time: first expansion/promo per Pokémon → JSON (resumable)
+├── scrape_bulbapedia.py       # fetch-only: dumps "<Name> (TCG)" wikitext → bulbapedia_raw.json (resumable, gitignored)
+├── parse_bulbapedia.py        # offline: bulbapedia_raw.json → bulbapedia_first_sets.json (re-runnable freely)
 ├── pokedex_data.py            # the #001–1025 skeleton (names + types) + generation helpers
-├── bulbapedia_first_sets.json # cached Bulbapedia first-set data (consumed by build.py)
+├── bulbapedia_first_sets.json # parsed Bulbapedia first-set data (tracked; consumed by build.py)
 ├── ptcg_cards.json            # cached pokemontcg.io card catalog (created on first build)
 ├── README.md
 └── setup.md                   # step-by-step: run, import, add checkboxes + Progress tab

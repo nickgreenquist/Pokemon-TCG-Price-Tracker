@@ -207,13 +207,19 @@ Full docs in `pokedex-tracker/README.md` / `setup.md`; key facts:
 - **Local Python, run once.** `build.py` (stdlib only) emits `pokedex.csv` to import into a
   Sheet; the user maintains it by hand. No trigger/cloud/recurring run — so the "no Node/Python"
   rule below (which is about the cloud-run Price Tracker) does NOT apply here.
-- **Data, both cached to JSON so rebuilds are offline:** `pokedex_data.py` = the #1–1025
+- **Data, all cached to JSON so rebuilds are offline:** `pokedex_data.py` = the #1–1025
   name/type skeleton (#1–649 hand-validated, #650–1025 from PokeAPI; scope range-driven off
   `DEX_MIN`/`DEX_MAX`); `bulbapedia_first_sets.json` (committed) = first English expansion +
-  promo per Pokémon from `scrape_bulbapedia.py` (used because pokemontcg.io's promo release
-  dates are unreliable — umbrella sets share one early date); `ptcg_cards.json` (gitignored) =
-  the pokemontcg.io card catalog, cached on first `build.py` run for the cheapest card + prices
-  (`--refresh` re-fetches). build.py aborts loudly rather than writing a truncated CSV.
+  promo per Pokémon, used because pokemontcg.io's promo release dates are unreliable (umbrella
+  sets share one early date). Bulbapedia data is a **two-step pipeline**: `scrape_bulbapedia.py`
+  dumps raw `<Name> (TCG)` wikitext to `bulbapedia_raw.json` (gitignored, resumable, atomic
+  writes every 25 entries) → `parse_bulbapedia.py` walks that offline to produce
+  `bulbapedia_first_sets.json`, so iterating the row-parser never re-hits the network.
+  `ptcg_cards.json` (gitignored) = the pokemontcg.io card catalog, cached on first `build.py`
+  run for the cheapest card + prices (`--refresh` re-fetches with per-page checkpointing to
+  `ptcg_cards.json.partial`, also gitignored, so a crashed/aborted refresh auto-resumes from
+  the next page on the next `--refresh`). build.py aborts loudly rather than writing a
+  truncated CSV.
 - **Columns:** cheapest card + first-expansion card + first-promo card (each with price), a
   "promo before expansion?" flag, and two Owned checkboxes (Any + a single First-Set box —
   user picks promo vs expansion when buying). McDonald's Collection counts as a promo.
