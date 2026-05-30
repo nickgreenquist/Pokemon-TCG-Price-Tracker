@@ -35,6 +35,9 @@ No pip install needed — all scripts use only the Python standard library.
 1. Create (or open) a Google Sheet.
 2. **File → Import → Upload → `pokedex.csv`**.
 3. Import location: **Insert new sheet(s)** (or replace current). Separator: **comma**.
+   **Convert text to numbers, dates, and formulas: ON** (defaults on) — required so the
+   `=HYPERLINK(...)` cells in the three card-id columns evaluate to clickable TCGplayer
+   links instead of literal formula text.
 4. Rename the imported tab to exactly **`Pokédex`** (with the `é`) — the Progress formulas
    below reference that name.
 

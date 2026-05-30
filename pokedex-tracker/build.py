@@ -29,6 +29,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -37,6 +38,7 @@ from pokedex_data import POKEDEX, DEX_MIN, DEX_MAX, gen_for
 BULBA_CACHE = "bulbapedia_first_sets.json"  # produced by scrape_bulbapedia.py
 PTCG_CACHE = "ptcg_cards.json"              # local dump of the pokemontcg.io card catalog
 PTCG_CACHE_PARTIAL = PTCG_CACHE + ".partial"  # in-progress fetch state; auto-resumed by --refresh
+TCG_URL_CACHE = "tcgplayer_url_cache.json"  # {redirect_url: resolved_url}, persistent across runs
 
 # ── Local API key (optional) ────────────────────────────────────────────────
 # Paste your pokemontcg.io key here to run without setting an env var, then blank
@@ -166,11 +168,16 @@ def group_by_dex(cards):
     """{dex: [normalized card, ...]}. Cards with multiple Dex numbers count for each."""
     by_dex = {}
     for card in cards:
+        tcg = card.get("tcgplayer") or {}
         norm = {
             "id": card.get("id"),
             "set_name": (card.get("set") or {}).get("name", ""),
             "price": card_market_price(card),
             "holo": is_holo(card),
+            # `prices.pokemontcg.io/tcgplayer/<id>` redirect that the API hands out — bounces
+            # through an affiliate chain to the real product page. Fine for clicks in a
+            # browser (Google Sheets / Excel); ~99% of catalog cards have one.
+            "tcgplayer_url": tcg.get("url") or "",
         }
         for num in card.get("nationalPokedexNumbers") or []:
             if DEX_MIN <= num <= DEX_MAX:
@@ -262,6 +269,86 @@ def _pick_first_with_card(rows_with_idx, cards_for):
     return _pick_first_listed(rows_with_idx, cards_for)
 
 
+# ── TCGplayer URL resolution ────────────────────────────────────────────────
+# pokemontcg.io's `card.tcgplayer.url` is a `prices.pokemontcg.io/tcgplayer/<id>`
+# affiliate redirect — clicks eventually land on tcgplayer.com but the URL itself
+# bounces through their Impact partner-network chain. We resolve it once per card
+# to a direct `tcgplayer.com/product/<id>` link, mirroring Code.gs's price tracker,
+# and cache the result so the cost is one-time.
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Make urllib raise HTTPError on a 30x instead of following — lets us read the
+    Location header off the first hop."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def resolve_tcgplayer_url(redirect_url, timeout=15):
+    """One no-follow GET to the first hop. The Impact partner URL encodes its real
+    destination as a `?u=<encoded-tcgplayer-url>` query param; we pull that out
+    rather than chasing the full 3-hop chain. Returns the resolved URL on success,
+    or the original `redirect_url` on any error so a link is never worse than before.
+    """
+    if not redirect_url:
+        return ""
+    try:
+        opener = urllib.request.build_opener(_NoRedirect)
+        req = urllib.request.Request(redirect_url, headers={"User-Agent": "pokedex-tracker/1.0"})
+        try:
+            with opener.open(req, timeout=timeout):
+                return redirect_url  # no redirect at all — give up cleanly
+        except urllib.error.HTTPError as e:
+            if 300 <= e.code < 400:
+                location = e.headers.get("Location", "")
+                u = (urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+                     .get("u") or [None])[0]
+                if u and "tcgplayer.com" in u:
+                    return u
+                if "tcgplayer.com" in location:
+                    return location  # already direct (e.g. pokemontcg.io shifted format)
+            return redirect_url
+    except Exception:  # noqa: BLE001 - any failure falls back to the redirect
+        return redirect_url
+
+
+def _load_url_cache():
+    if os.path.exists(TCG_URL_CACHE):
+        with open(TCG_URL_CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_url_cache(cache):
+    tmp = TCG_URL_CACHE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, sort_keys=True)
+    os.replace(tmp, TCG_URL_CACHE)
+
+
+def resolve_urls_batch(redirect_urls):
+    """Returns {redirect: resolved} for the given URLs, using the local cache and
+    falling back to HTTP for misses. Persists the cache every 50 new resolutions so
+    a crash mid-pull doesn't lose work."""
+    cache = _load_url_cache()
+    miss = [u for u in redirect_urls if u not in cache]
+    if not miss:
+        return {u: cache[u] for u in redirect_urls}
+    print(f"Resolving {len(miss)} TCGplayer redirect URLs (one-time; cached after)...")
+    pending = 0
+    for i, u in enumerate(miss, 1):
+        cache[u] = resolve_tcgplayer_url(u)
+        pending += 1
+        if pending >= 50:
+            _save_url_cache(cache)
+            pending = 0
+        if i % 100 == 0:
+            print(f"  {i}/{len(miss)} resolved")
+        time.sleep(0.1)  # polite cadence — same upstream domain as the catalog API
+    _save_url_cache(cache)
+    print(f"  done; cache now has {len(cache)} entries in {TCG_URL_CACHE}.")
+    return {u: cache[u] for u in redirect_urls}
+
+
 HEADERS = ["#", "Pokémon", "Gen", "Type(s)",
            "Cheapest Card", "Cheapest Set", "Cheapest ~ Price ($)", "Owned (Any)?",
            "First Expansion Card", "First Expansion Set", "First Expansion ~ Price ($)",
@@ -270,11 +357,39 @@ HEADERS = ["#", "Pokémon", "Gen", "Type(s)",
 
 
 def _id(card):
-    return card["id"] if card else "—"
+    """Card id, wrapped as a Google Sheets HYPERLINK to TCGplayer when an URL is available.
+
+    `=HYPERLINK("url","label")` is evaluated as a clickable link on CSV import (the import
+    dialog's "Convert text to numbers, dates, and formulas" option must be enabled — it
+    defaults on). Cards without a tcgplayer.url (~1% of the catalog, mostly very-new
+    promos) fall through to the bare id. csv.writer handles the outer CSV quoting.
+    """
+    if not card:
+        return "—"
+    url = card.get("tcgplayer_url")
+    if url:
+        return f'=HYPERLINK("{url}","{card["id"]}")'
+    return card["id"]
 
 
 def _price(card):
     return card["price"] if (card and card["price"] is not None) else ""
+
+
+def _pick_for_pokemon(num, by_dex, bulba):
+    """Returns (cheap, exp_card, exp_row, exp_i, promo_card, promo_row, promo_i) for one
+    Pokémon — the three cards that land in the CSV plus the chosen rows + their Bulbapedia
+    indices for the promo-before-expansion flag. Shared by build_rows and the URL
+    pre-resolver so both passes pick the same cards (no risk of drift)."""
+    cards_for = by_dex.get(num, [])
+    cheap = cheapest_card(cards_for)
+    info = bulba.get(str(num), {})
+    en_rows = info.get("en_rows") or []
+    exp_rows = [(i, r) for i, r in enumerate(en_rows) if not _is_promo_row(r[0], r[2])]
+    promo_rows = [(i, r) for i, r in enumerate(en_rows) if _is_promo_row(r[0], r[2])]
+    exp_i, exp_row, exp_card = _pick_first_with_card(exp_rows, cards_for)
+    promo_i, promo_row, promo_card = _pick_first_with_card(promo_rows, cards_for)
+    return cheap, exp_card, exp_row, exp_i, promo_card, promo_row, promo_i
 
 
 def build_rows(by_dex, bulba):
@@ -282,25 +397,13 @@ def build_rows(by_dex, bulba):
     by_dex: {dex: [cards]} from pokemontcg.io (cheapest + price source).
     bulba:  {str(dex): {name, title, en_rows: [[set, num, sym], ...]}} from Bulbapedia.
 
-    Walks each Pokémon's en_rows once: splits into expansion / promo rows preserving
-    each row's index for the promo-before-expansion comparison, then picks the first
-    row in each category whose set has a card in our catalog (falling back to first
-    listed when nothing hits). See _pick_first_with_card for why the fallback matters.
+    Picks each Pokémon's three cards via _pick_for_pokemon (catalog-aware selection
+    handles Bulbapedia's non-strict-chronological promo ordering — see _pick_first_with_card).
     """
     rows = []
     for num, name, types in POKEDEX:
         gen = gen_for(num)
-        cards_for = by_dex.get(num, [])
-
-        cheap = cheapest_card(cards_for)
-
-        info = bulba.get(str(num), {})
-        en_rows = info.get("en_rows") or []
-        exp_rows = [(i, r) for i, r in enumerate(en_rows) if not _is_promo_row(r[0], r[2])]
-        promo_rows = [(i, r) for i, r in enumerate(en_rows) if _is_promo_row(r[0], r[2])]
-
-        exp_i, exp_row, exp_card = _pick_first_with_card(exp_rows, cards_for)
-        promo_i, promo_row, promo_card = _pick_first_with_card(promo_rows, cards_for)
+        cheap, exp_card, exp_row, exp_i, promo_card, promo_row, promo_i = _pick_for_pokemon(num, by_dex, bulba)
 
         exp_set = exp_row[0] if exp_row else "—"
         promo_set = promo_row[0] if promo_row else "—"
@@ -370,6 +473,26 @@ def main():
         sys.exit("No cards available — fetch failed and no cache present.")
 
     by_dex = group_by_dex(cards)
+
+    # Pre-pass: collect the distinct affiliate-redirect URLs that will land in the CSV's
+    # three card columns and resolve them to direct tcgplayer.com links (cached). Done
+    # before build_rows so each picked card carries a resolved URL by the time _id
+    # wraps it in HYPERLINK.
+    picked_urls = set()
+    for num, _name, _types in POKEDEX:
+        cheap, exp_card, _, _, promo_card, _, _ = _pick_for_pokemon(num, by_dex, bulba)
+        for c in (cheap, exp_card, promo_card):
+            if c and c.get("tcgplayer_url"):
+                picked_urls.add(c["tcgplayer_url"])
+    resolved = resolve_urls_batch(picked_urls)
+    # Substitute the resolved URL onto each card's normalized form. Cards not in the
+    # CSV still carry the raw redirect, which is harmless (never read).
+    for cards_list in by_dex.values():
+        for c in cards_list:
+            u = c.get("tcgplayer_url")
+            if u in resolved:
+                c["tcgplayer_url"] = resolved[u]
+
     rows = build_rows(by_dex, bulba)
 
     with open(args.out, "w", newline="", encoding="utf-8") as fh:
