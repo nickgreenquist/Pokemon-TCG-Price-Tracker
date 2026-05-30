@@ -200,16 +200,66 @@ def _bulba_set_to_norm(bulba_name):
 
 
 def card_in_set(cards_for, bulba_set_name):
-    """The non-holo (then cheapest) pokemontcg.io card of this Pokémon in the named set, or None."""
+    """The non-holo (then cheapest) pokemontcg.io card of this Pokémon in the named set, or None.
+
+    Year-fuzz for McDonald's Collection: Bulbapedia stores the bare name "McDonald's
+    Collection"; pokemontcg.io has per-year subsets ("McDonald's Collection 2011", ...).
+    On a bare-name target, accept any year-suffixed subset and pick the earliest year
+    that actually has a card for this Pokémon — that's the real English debut.
+    """
     if not bulba_set_name:
         return None
     target = _bulba_set_to_norm(bulba_set_name)
-    cands = [c for c in cards_for if _norm_set(c["set_name"]) == target]
+    if target == "mcdonald s collection":
+        cands_all = [c for c in cards_for if _norm_set(c["set_name"]).startswith(target)]
+        if not cands_all:
+            return None
+        # Set names like "McDonald's Collection 2011" sort alphabetically = numerically by year.
+        earliest_set = min(c["set_name"] for c in cands_all)
+        cands = [c for c in cands_all if c["set_name"] == earliest_set]
+    else:
+        cands = [c for c in cards_for if _norm_set(c["set_name"]) == target]
     if not cands:
         return None
     non_holo = [c for c in cands if not c["holo"]]
     pool = non_holo or cands
     return min(pool, key=lambda c: _price_sort_key(c["price"]))
+
+
+# Promo classifier — mirrors parse_bulbapedia.is_promo (Bulbapedia rows whose set is
+# a "promo"/promotional series, plus McDonald's Collection distributions).
+def _is_promo_row(enset, ensymbol):
+    s = (enset + " " + ensymbol).lower()
+    return "promo" in s or "mcdonald" in s
+
+
+def _pick_first_listed(rows_with_idx, cards_for):
+    """Take the first row regardless of catalog hit; card may be None."""
+    if not rows_with_idx:
+        return None, None, None
+    i, row = rows_with_idx[0]
+    return i, row, card_in_set(cards_for, row[0])
+
+
+def _pick_first_with_card(rows_with_idx, cards_for):
+    """Walk rows in Bulbapedia order and return the first whose named set has a card
+    for this Pokémon in our pokemontcg.io catalog.
+
+    Why this matters: Bulbapedia groups some promo categories instead of strict-
+    chronological order — Tyrantrum lists MEP Black Star Promos (2025/26) before
+    XY Black Star Promos #XY70 (Nov 2014), and pokemontcg.io has the XY70 card but
+    not the MEP one. The naive "first listed" pick yields a card-less row; "first
+    with card" yields the real XY70. Applied to expansions too for symmetry — they
+    almost never need the fallback, but it costs nothing.
+
+    Falls back to the first listed row (card may be None) if no row hits the catalog,
+    so we still report the named set even when no card is indexed yet.
+    """
+    for i, row in rows_with_idx:
+        card = card_in_set(cards_for, row[0])
+        if card:
+            return i, row, card
+    return _pick_first_listed(rows_with_idx, cards_for)
 
 
 HEADERS = ["#", "Pokémon", "Gen", "Type(s)",
@@ -230,7 +280,12 @@ def _price(card):
 def build_rows(by_dex, bulba):
     """
     by_dex: {dex: [cards]} from pokemontcg.io (cheapest + price source).
-    bulba:  {str(dex): {first_expansion, first_promo, promo_before_expansion}} from Bulbapedia.
+    bulba:  {str(dex): {name, title, en_rows: [[set, num, sym], ...]}} from Bulbapedia.
+
+    Walks each Pokémon's en_rows once: splits into expansion / promo rows preserving
+    each row's index for the promo-before-expansion comparison, then picks the first
+    row in each category whose set has a card in our catalog (falling back to first
+    listed when nothing hits). See _pick_first_with_card for why the fallback matters.
     """
     rows = []
     for num, name, types in POKEDEX:
@@ -240,14 +295,18 @@ def build_rows(by_dex, bulba):
         cheap = cheapest_card(cards_for)
 
         info = bulba.get(str(num), {})
-        exp = info.get("first_expansion")   # [set_name, ennum] or None
-        promo = info.get("first_promo")     # [set_name, ennum] or None
-        exp_set = exp[0] if exp else "—"
-        promo_set = promo[0] if promo else "—"
-        exp_card = card_in_set(cards_for, exp[0]) if exp else None
-        promo_card = card_in_set(cards_for, promo[0]) if promo else None
-        # Order flag only meaningful when a promo exists.
-        pbe = "" if not promo else ("TRUE" if info.get("promo_before_expansion") else "FALSE")
+        en_rows = info.get("en_rows") or []
+        exp_rows = [(i, r) for i, r in enumerate(en_rows) if not _is_promo_row(r[0], r[2])]
+        promo_rows = [(i, r) for i, r in enumerate(en_rows) if _is_promo_row(r[0], r[2])]
+
+        exp_i, exp_row, exp_card = _pick_first_with_card(exp_rows, cards_for)
+        promo_i, promo_row, promo_card = _pick_first_with_card(promo_rows, cards_for)
+
+        exp_set = exp_row[0] if exp_row else "—"
+        promo_set = promo_row[0] if promo_row else "—"
+        # Order flag uses the CHOSEN rows' indices in Bulbapedia's combined ordering.
+        # Bulbapedia is rough chronology — good enough for the buy-which-first flag.
+        pbe = "" if not promo_row else ("TRUE" if promo_i < exp_i else "FALSE")
 
         rows.append([
             num, name, gen, types,
