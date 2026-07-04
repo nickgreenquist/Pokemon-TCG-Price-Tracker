@@ -44,10 +44,13 @@ into Google Sheets once, then maintain by hand.
 ```
 pokedex-tracker/
 ├── build.py                   # builder: card catalog + Bulbapedia cache → pokedex.csv
+├── shopping_list.py           # reads live Owned state from the Sheet → pokedex_shopping.html (buy list)
+├── binder_layout.py           # binder_mons.json → binder_layout.html + gen6-9 CSVs (National Dex slot map)
 ├── scrape_bulbapedia.py       # fetch-only: dumps "<Name> (TCG)" wikitext → bulbapedia_raw.json (resumable, gitignored)
 ├── parse_bulbapedia.py        # offline: bulbapedia_raw.json → bulbapedia_first_sets.json (re-runnable freely)
 ├── pokedex_data.py            # the #001–1025 skeleton (names + types) + generation helpers
 ├── bulbapedia_first_sets.json # parsed Bulbapedia first-set data (tracked; consumed by build.py)
+├── binder_mons.json           # tracked sprite/name/type cache binder_layout.py renders from (offline)
 ├── ptcg_cards.json            # cached pokemontcg.io card catalog (created on first build)
 ├── README.md
 └── setup.md                   # step-by-step: run, import, add checkboxes + Progress tab
@@ -66,6 +69,29 @@ POKEMONTCG_API_KEY=your_key python3 build.py     # ~1–3 min, writes pokedex.cs
 Then import `pokedex.csv` into a Google Sheet and do the ~3-minute setup in `setup.md`
 (add checkboxes to the two `Owned?` columns, paste the Progress-tab formulas). The API key is
 optional (free at pokemontcg.io) but avoids rate limits.
+
+## Shopping list — what's left to buy
+
+`shopping_list.py` turns "what I still don't own" into a click-through buy list. It reads
+the **live `Owned (Any)?` column straight from the Google Sheet** (its public CSV export)
+and joins it against the cheapest-card TCGplayer links already in `pokedex.csv`, then writes
+`pokedex_shopping.html` — one tile per un-owned Pokémon, grouped by generation, each opening
+the cheapest listing in a new tab and checking itself off (progress saved in the browser).
+
+```bash
+python3 shopping_list.py                    # fetch live Sheet, write pokedex_shopping.html
+python3 shopping_list.py --owned-csv f.csv  # offline: read Owned state from a downloaded CSV
+python3 shopping_list.py --out cart.html    # choose the output file
+```
+
+The loop: buy some cards → check them off in the Sheet's `Owned (Any)?` column → re-run →
+the ones you bought drop off, so what's left on the page is exactly what's left to buy.
+Owned-state **always** comes from the Sheet (or `--owned-csv`), never `pokedex.csv`'s stale
+Owned column; the links/prices come from `pokedex.csv`, so re-run `build.py` first if you
+want fresh prices. Needs the Sheet shared "Anyone with the link → Viewer" for the live
+fetch (else use `--owned-csv`). 3 very new cards with no cached listing link to a TCGplayer
+search instead. To cut shipping, cart everything then run TCGplayer's Cart Optimizer —
+Mass Entry can't match this list. `pokedex_shopping.html` is gitignored (regenerated output).
 
 ## CSV / sheet layout (16 columns)
 
