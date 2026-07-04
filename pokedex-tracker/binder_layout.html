@@ -13,7 +13,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-a
 .sw{width:20px;height:20px;border-radius:5px;flex:none;background:var(--accent)}
 .sw.dot{border-radius:50%;background:conic-gradient(from 0deg,#57A863,#4C90D5,#DE6C8E,#EA7A3C,#E5C531,#57A863)}
 .sw.blanksw{background:var(--blank);border:1.5px dashed var(--line)}
-.pages{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:20px;align-items:start}
+.pages{margin:30px auto 0;max-width:680px;display:grid;grid-template-columns:1fr;gap:22px;align-items:start}
 .genrule{grid-column:1/-1;display:flex;align-items:baseline;gap:12px;margin:26px 0 2px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 .genrule:first-child{margin-top:0}
 .gnum{font-size:19px;font-weight:800;letter-spacing:-.01em;color:var(--ink)}
@@ -39,7 +39,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-a
 .cell.blank{background:repeating-linear-gradient(-45deg,var(--blank),var(--blank) 6px,transparent 6px,transparent 12px);border:1px dashed var(--line)}
 .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);text-align:center}
 @media print{body{background:#fff;color:#000;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .legend,.page{box-shadow:none}.pages{grid-template-columns:repeat(2,1fr);gap:10px}.title{border-color:#000}.genrule{break-after:avoid}}
+  .legend,.page{box-shadow:none}.pages{max-width:none;grid-template-columns:1fr;gap:12px}.title{border-color:#000}.genrule{break-after:avoid}}
 @media (max-width:540px){.pages{grid-template-columns:1fr}}
 </style>
 <div class="masthead"><h1 class="title">Pokémon National Dex — Binder Layout</h1><p class="lede">The complete #1–1025 run mapped to a 1088-slot binder — 68 pages, 16 slots each. Every generation begins on a fresh page and opens with three energy-led rows — <b>Grass</b>, <b>Fire</b>, <b>Water</b> energy each heading its starter line — then straight dex order, no padding. Two wrinkles: <b>Gen&nbsp;5</b> hands its top-left slot to the mythical <b>#494&nbsp;Victini</b> in place of the Grass Energy, and <b>Gen&nbsp;8</b> (exactly 96 Pokémon = six perfect pages) skips its energy leaders so the whole dex fits 68 pages instead of 69. Gen&nbsp;9 lands #1025 Pecharunt on the final slot of page 68.</p><div class="legend"><span class="lg"><i class="sw" style="background:#EA7A3C"></i>Energy leader</span><span class="lg"><i class="sw dot"></i>Pokémon (stripe = primary type)</span><span class="lg"><i class="sw blanksw"></i>Spare slot</span></div></div>
