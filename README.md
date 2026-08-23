@@ -1,15 +1,15 @@
 # 🎴 Pokémon TCG Tracker
 
-Two personal collector/investment tools for vintage Pokémon cards, in one repo:
+A Google Apps Script that pulls daily market prices for a watchlist of vintage Pokémon cards
+and emails a daily summary with alerts.
 
-- **💰 Price Tracker** — a Google Apps Script that pulls daily market prices for a watchlist
-  and emails a daily summary with alerts. (Documented below.)
-- **📒 Pokédex Completion Tracker** — a local Python script that builds a Google Sheet
-  checklist for completing the National Pokédex (#1–1025, Gen 1–9) in TCG-card form. See
-  **[`pokedex-tracker/`](./pokedex-tracker/)**.
-
-Both are for collecting/investing (cards I want to buy, e.g. Neo Genesis Lugia, Base Set
+This is for collecting/investing (cards I want to buy, e.g. Neo Genesis Lugia, Base Set
 Charizard) — not deck building or competitive play.
+
+> **Looking for the binder / Pokédex-completion tooling?** It used to live here under
+> `pokedex-tracker/` and now has its own repo:
+> **[Pokemon-TCG-Binder-Tracker](https://github.com/nickgreenquist/Pokemon-TCG-Binder-Tracker)** — the complete, correctly-ordered list of all 1,025
+> Pokémon plus the physical binder layout matrix.
 
 ---
 
@@ -85,12 +85,11 @@ read the execution log for matching `id | name | set` results. See
 
 ```
 .
-├── README.md            # this file (both tools)
-├── Code.gs              # Price Tracker — the Apps Script (all logic)
-├── watchlist.md         # Price Tracker — cards tracked and why
-├── setup.md             # Price Tracker — step-by-step Google Sheets setup
-├── tests/run_tests.js   # Price Tracker — local dev test harness (not deployed)
-└── pokedex-tracker/     # Pokédex Completion Tracker (Python → CSV; has its own README)
+├── README.md            # this file
+├── Code.gs              # the Apps Script (all logic)
+├── watchlist.md         # cards tracked and why
+├── setup.md             # step-by-step Google Sheets setup
+└── tests/run_tests.js   # local dev test harness (not deployed)
 ```
 
 > The Price Tracker code that actually runs lives in the Google Sheet's Apps Script editor —
@@ -131,22 +130,8 @@ week-over-week tolerance window, duplicate-run protection, and the end-to-end al
 
 ---
 
-## 📒 Pokédex Completion Tracker
+## 📒 Binder / Pokédex completion
 
-A separate tool in **[`pokedex-tracker/`](./pokedex-tracker/)** for a different goal:
-tracking progress toward **collecting the whole National Pokédex (#1–1025, Gen 1–9) in card
-form** — one row per *Pokémon*, not per card.
-
-Unlike the Price Tracker, this is a **local Python script** (no Apps Script, no server, no
-recurring job). It builds a CSV you import into a Google Sheet once, then maintain by hand:
-
-- **Cheapest** card per Pokémon (any print) from pokemontcg.io, with its price.
-- **First Set** cards — the first English **expansion** *and* first **promo** each Pokémon
-  appeared in (sourced from **Bulbapedia** for accuracy, since pokemontcg.io's promo release
-  dates are unreliable), each with a price, plus a flag for which came first.
-- Two checkbox tracks — *own any card* and *own a first-set card* — and a Progress tab with
-  per-generation completion %.
-
-Both data sources are cached locally, so after one fetch the build runs fully offline.
-See **[`pokedex-tracker/README.md`](./pokedex-tracker/README.md)** and
-**[`pokedex-tracker/setup.md`](./pokedex-tracker/setup.md)**.
+Moved out of this repo. Tracking progress toward **collecting the whole National Pokédex
+(#1–1025, Gen 1–9) in card form**, plus the page-and-pocket layout matrix for the physical
+binder, now lives in **[Pokemon-TCG-Binder-Tracker](https://github.com/nickgreenquist/Pokemon-TCG-Binder-Tracker)**.

@@ -1,13 +1,10 @@
 # Pokémon TCG Tracker
 
-This repo holds **two** personal collector/investment tools:
-1. **Price Tracker** — Google Apps Script (`Code.gs`) emailing daily prices + alerts. Most of
-   this file documents it.
-2. **Pokédex Completion Tracker** — a local Python build in `pokedex-tracker/` that generates a
-   Pokédex-completion checklist CSV. It has its own `pokedex-tracker/README.md` / `setup.md`;
-   see the "Pokédex Completion Tracker" section near the bottom.
+**Price Tracker** — a Google Apps Script (`Code.gs`) that emails daily prices + alerts for a
+watchlist of vintage Pokémon cards. This file documents it.
 
-The Workflow Rules below apply to both tools.
+The binder/Pokédex-completion tooling that used to live here in `pokedex-tracker/` moved to its
+own repo, **Pokemon-TCG-Binder-Tracker**. Nothing in this repo depends on it.
 
 ## Workflow Rules
 
@@ -43,17 +40,13 @@ live.** Once a day a Google Apps Script:
 
 ## Project Structure
 
-The **Price Tracker** lives at the repo root; the **Pokédex Completion Tracker** is the
-self-contained `pokedex-tracker/` subfolder (its own README/setup):
-
 ```
 .
-├── README.md            # repo overview (both tools)
-├── Code.gs              # Price Tracker — the Apps Script (all logic)
-├── watchlist.md         # Price Tracker — cards tracked and why (roster source of truth)
-├── setup.md             # Price Tracker — step-by-step Google Sheets setup
-├── tests/run_tests.js   # Price Tracker — Node test harness (dev-only, not deployed)
-└── pokedex-tracker/     # Pokédex Completion Tracker — local Python build (see its README)
+├── README.md            # repo overview
+├── Code.gs              # the Apps Script (all logic)
+├── watchlist.md         # cards tracked and why (roster source of truth)
+├── setup.md             # step-by-step Google Sheets setup
+└── tests/run_tests.js   # Node test harness (dev-only, not deployed)
 ```
 
 The Price Tracker's running code lives in the Google Sheet's Apps Script editor — this repo is
@@ -198,40 +191,11 @@ The repo files are the source of truth — don't duplicate their content here:
 
 ---
 
-## Pokédex Completion Tracker (`pokedex-tracker/`)
-
-A **separate, local** tool — NOT Apps Script. Builds a Google Sheet checklist for completing
-the National Pokédex (#1–1025, Gen 1–9) in TCG-card form (one row per Pokémon, not per card).
-Full docs in `pokedex-tracker/README.md` / `setup.md`; key facts:
-
-- **Local Python, run once.** `build.py` (stdlib only) emits `pokedex.csv` to import into a
-  Sheet; the user maintains it by hand. No trigger/cloud/recurring run — so the "no Node/Python"
-  rule below (which is about the cloud-run Price Tracker) does NOT apply here.
-- **Data, all cached to JSON so rebuilds are offline:** `pokedex_data.py` = the #1–1025
-  name/type skeleton (#1–649 hand-validated, #650–1025 from PokeAPI; scope range-driven off
-  `DEX_MIN`/`DEX_MAX`); `bulbapedia_first_sets.json` (committed) = first English expansion +
-  promo per Pokémon, used because pokemontcg.io's promo release dates are unreliable (umbrella
-  sets share one early date). Bulbapedia data is a **two-step pipeline**: `scrape_bulbapedia.py`
-  dumps raw `<Name> (TCG)` wikitext to `bulbapedia_raw.json` (gitignored, resumable, atomic
-  writes every 25 entries) → `parse_bulbapedia.py` walks that offline to produce
-  `bulbapedia_first_sets.json`, so iterating the row-parser never re-hits the network.
-  `ptcg_cards.json` (gitignored) = the pokemontcg.io card catalog, cached on first `build.py`
-  run for the cheapest card + prices (`--refresh` re-fetches with per-page checkpointing to
-  `ptcg_cards.json.partial`, also gitignored, so a crashed/aborted refresh auto-resumes from
-  the next page on the next `--refresh`). build.py aborts loudly rather than writing a
-  truncated CSV.
-- **Columns:** cheapest card + first-expansion card + first-promo card (each with price), a
-  "promo before expansion?" flag, and two Owned checkboxes (Any + a single First-Set box —
-  user picks promo vs expansion when buying). McDonald's Collection counts as a promo.
-- Same commit gate; "test" here = running `build.py` locally (no Apps Script paste step).
-
----
-
 ## Constraints & Notes
 
-- **Price Tracker: no Node.js, no npm, no local runtime** — it's pure Google Apps Script
-  (`.gs`), running entirely in Google's cloud; all its logic stays in one `Code.gs`. (This is
-  about the cloud-run Price Tracker only — the Pokédex tracker above is intentionally local Python.)
+- **No Node.js, no npm, no local runtime** — it's pure Google Apps Script (`.gs`), running
+  entirely in Google's cloud; all its logic stays in one `Code.gs`. (The Node harness under
+  `tests/` is the one exception, and it is dev-only — never deployed.)
 - The `.gs` file uses `UrlFetchApp`, `SpreadsheetApp`, `MailApp`, `Utilities`, `Session` —
   all built-in Apps Script services, no imports needed.
 - **Verify every card ID against the API before adding it.** Slugs lie: `neo3-10` turned
